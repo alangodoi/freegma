@@ -117,6 +117,17 @@ guidesGroup.dataset.guides = '1';
 guidesGroup.style.pointerEvents = 'none';
 guidesGroup.style.display = 'none';
 
+// --- Marquee (drag-to-select) rectangle ---
+const marqueeRect = document.createElementNS(SVG_NS, 'rect');
+marqueeRect.dataset.marquee = '1';
+marqueeRect.setAttribute('fill', 'rgba(255,120,150,0.12)');
+marqueeRect.setAttribute('stroke', '#ff7898');
+marqueeRect.setAttribute('stroke-width', '1');
+marqueeRect.setAttribute('stroke-dasharray', '4 2');
+marqueeRect.setAttribute('vector-effect', 'non-scaling-stroke');
+marqueeRect.style.pointerEvents = 'none';
+marqueeRect.style.display = 'none';
+
 // --- Path anchor overlay (visual editor for free-form <path> elements) ---
 const pathAnchorsGroup = document.createElementNS(SVG_NS, 'g');
 pathAnchorsGroup.dataset.pathAnchors = '1';
@@ -935,6 +946,7 @@ function newDrawing(width = 512, height = 512, name = null) {
   svgCanvas.appendChild(boundsRect);
   svgCanvas.appendChild(guidesGroup);
   svgCanvas.appendChild(pathAnchorsGroup);
+  svgCanvas.appendChild(marqueeRect);
   svgCanvas.appendChild(handlesGroup);
   handlesGroup.style.display = 'none';
   clearGuides();
@@ -971,6 +983,7 @@ function loadDrawing(id) {
   svgCanvas.appendChild(boundsRect);
   svgCanvas.appendChild(guidesGroup);
   svgCanvas.appendChild(pathAnchorsGroup);
+  svgCanvas.appendChild(marqueeRect);
   svgCanvas.appendChild(handlesGroup);
   handlesGroup.style.display = 'none';
   const bgOnLoad = getBgRect();
@@ -986,7 +999,7 @@ function loadDrawing(id) {
 
 function cleanClone() {
   const clone = svgCanvas.cloneNode(true);
-  clone.querySelectorAll('[data-bounds], [data-handles], [data-guides], [data-path-anchors]').forEach(e => e.remove());
+  clone.querySelectorAll('[data-bounds], [data-handles], [data-guides], [data-path-anchors], [data-marquee]').forEach(e => e.remove());
   clone.setAttribute('viewBox', `0 0 ${currentW} ${currentH}`);
   clone.setAttribute('width', String(currentW));
   clone.setAttribute('height', String(currentH));
@@ -1045,8 +1058,8 @@ function refreshIconList() {
 function refreshElementList() {
   elementList.innerHTML = '';
   const els = Array.from(svgCanvas.children).filter(c => {
-    if (c === handlesGroup || c === boundsRect) return false;
-    if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors)) return false;
+    if (c === handlesGroup || c === boundsRect || c === marqueeRect) return false;
+    if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors || c.dataset.marquee)) return false;
     return true;
   });
   if (els.length === 0) {
@@ -1270,6 +1283,66 @@ function computeSnap(hypo) {
           x1: Math.min(snapped.left, ref.left),
           x2: Math.max(snapped.right, ref.right),
         });
+      }
+    }
+  }
+  return { snapDx, snapDy, vGuides, hGuides };
+}
+
+// Resize-time alignment snap. Only the edges implied by the handle move,
+// so we snap just those to ref boxes and build matching guide lines.
+// Supports primitive rect/ellipse + rect-like paths (path[data-rect="1"]);
+// skips tags whose resize semantics don't map cleanly to per-edge deltas
+// (circle's radius-based resize, transform-based generic fallback).
+function computeResizeSnap(el, handle) {
+  const tag = el.tagName;
+  const isRectPath = tag === 'path' && el.dataset.rect === '1';
+  if (!isRectPath && tag !== 'rect' && tag !== 'ellipse') {
+    return { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] };
+  }
+  const bb = bboxInCanvas(el);
+  const keys = toBoxKeys(bb);
+  const movingX = handle.includes('e') ? 'right' : handle.includes('w') ? 'left' : null;
+  const movingY = handle.includes('s') ? 'bottom' : handle.includes('n') ? 'top'  : null;
+  const refs = collectGuideRefs();
+  const rect = svgCanvas.getBoundingClientRect();
+  const threshold = rect.width > 0 ? SNAP_THRESHOLD_PX * vbW / rect.width : SNAP_THRESHOLD_PX;
+  const xKeys = ['left', 'cx', 'right'];
+  const yKeys = ['top', 'cy', 'bottom'];
+  let snapDx = 0, snapDy = 0, bestX = Infinity, bestY = Infinity;
+  if (movingX) {
+    for (const ref of refs) for (const rk of xKeys) {
+      const d = ref[rk] - keys[movingX];
+      const ad = Math.abs(d);
+      if (ad < threshold && ad < bestX) { bestX = ad; snapDx = d; }
+    }
+  }
+  if (movingY) {
+    for (const ref of refs) for (const rk of yKeys) {
+      const d = ref[rk] - keys[movingY];
+      const ad = Math.abs(d);
+      if (ad < threshold && ad < bestY) { bestY = ad; snapDy = d; }
+    }
+  }
+  const snappedLeft   = movingX === 'left'   ? keys.left   + snapDx : keys.left;
+  const snappedRight  = movingX === 'right'  ? keys.right  + snapDx : keys.right;
+  const snappedTop    = movingY === 'top'    ? keys.top    + snapDy : keys.top;
+  const snappedBottom = movingY === 'bottom' ? keys.bottom + snapDy : keys.bottom;
+  const snapped = {
+    left: snappedLeft, right: snappedRight, cx: (snappedLeft + snappedRight) / 2,
+    top:  snappedTop,  bottom: snappedBottom, cy: (snappedTop + snappedBottom) / 2,
+  };
+  const eps = Math.max(0.01, threshold * 0.01);
+  const vGuides = [], hGuides = [];
+  for (const ref of refs) {
+    if (movingX) {
+      for (const rk of xKeys) if (Math.abs(snapped[movingX] - ref[rk]) < eps) {
+        vGuides.push({ x: ref[rk], y1: Math.min(snapped.top, ref.top), y2: Math.max(snapped.bottom, ref.bottom) });
+      }
+    }
+    if (movingY) {
+      for (const rk of yKeys) if (Math.abs(snapped[movingY] - ref[rk]) < eps) {
+        hGuides.push({ y: ref[rk], x1: Math.min(snapped.left, ref.left), x2: Math.max(snapped.right, ref.right) });
       }
     }
   }
@@ -1620,7 +1693,7 @@ function cpCollectCanvasColors() {
   const walk = (el) => {
     if (!el) return;
     const d = el.dataset;
-    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides || d.bg)) return;
+    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides || d.bg || d.marquee)) return;
     for (const attr of ['fill', 'stroke']) {
       const v = getPaint(el, attr);
       if (v && v !== 'none') {
@@ -2169,7 +2242,7 @@ function populateProps(el) {
 
 function snapshotCanvas() {
   const clone = svgCanvas.cloneNode(true);
-  clone.querySelectorAll('[data-handles], [data-bounds], [data-guides], [data-path-anchors]').forEach(e => e.remove());
+  clone.querySelectorAll('[data-handles], [data-bounds], [data-guides], [data-path-anchors], [data-marquee]').forEach(e => e.remove());
   return clone.innerHTML;
 }
 
@@ -2181,6 +2254,7 @@ function restoreCanvas(html) {
   svgCanvas.appendChild(boundsRect);
   svgCanvas.appendChild(guidesGroup);
   svgCanvas.appendChild(pathAnchorsGroup);
+  svgCanvas.appendChild(marqueeRect);
   svgCanvas.appendChild(handlesGroup);
   handlesGroup.style.display = 'none';
   clearGuides();
@@ -2376,7 +2450,23 @@ svgCanvas.addEventListener('mousedown', (e) => {
   }
 
   if (tgt === svgCanvas || tgt === boundsRect || handlesGroup.contains(tgt)) {
-    if (tgt === svgCanvas || tgt === boundsRect) clearSelection();
+    if (tgt === svgCanvas || tgt === boundsRect) {
+      // Start marquee drag. Selection is only cleared on mouseup if the
+      // marquee ended empty (so a bare click on empty canvas still clears).
+      const sp = svgPt(e);
+      drag = {
+        mode: 'marquee',
+        startX: sp.x, startY: sp.y,
+        x: sp.x, y: sp.y,
+        additive: e.ctrlKey || e.metaKey,
+        prevSelection: selection.slice(),
+      };
+      marqueeRect.setAttribute('x', sp.x);
+      marqueeRect.setAttribute('y', sp.y);
+      marqueeRect.setAttribute('width', 0);
+      marqueeRect.setAttribute('height', 0);
+      e.preventDefault();
+    }
     return;
   }
 
@@ -2458,9 +2548,26 @@ window.addEventListener('mousemove', (e) => {
     drag.appliedX = finalX;
     drag.appliedY = finalY;
     renderGuides(vGuides, hGuides);
+  } else if (drag.mode === 'marquee') {
+    const x1 = Math.min(drag.startX, sp.x);
+    const y1 = Math.min(drag.startY, sp.y);
+    const w  = Math.abs(sp.x - drag.startX);
+    const h  = Math.abs(sp.y - drag.startY);
+    marqueeRect.setAttribute('x', x1);
+    marqueeRect.setAttribute('y', y1);
+    marqueeRect.setAttribute('width',  w);
+    marqueeRect.setAttribute('height', h);
+    marqueeRect.style.display = '';
+    drag.x = sp.x; drag.y = sp.y;
+    return; // skip updateHandles / path-anchor rendering below
   } else if (drag.mode === 'resize' && selection.length === 1) {
     const dx = sp.x - drag.x, dy = sp.y - drag.y;
     resizeElement(selection[0], dx, dy, drag.handle, drag.startBBox);
+    const snap = computeResizeSnap(selection[0], drag.handle);
+    if (snap.snapDx || snap.snapDy) {
+      resizeElement(selection[0], snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
+    }
+    renderGuides(snap.vGuides, snap.hGuides);
     populateProps(selection[0]);
     drag.x = sp.x; drag.y = sp.y;
   } else if (drag.mode === 'rotate') {
@@ -2494,10 +2601,40 @@ window.addEventListener('mouseup', () => {
     drag = null;
     return;
   }
+  if (drag && drag.mode === 'marquee') {
+    marqueeRect.style.display = 'none';
+    const x1 = Math.min(drag.startX, drag.x);
+    const y1 = Math.min(drag.startY, drag.y);
+    const x2 = Math.max(drag.startX, drag.x);
+    const y2 = Math.max(drag.startY, drag.y);
+    const hits = [];
+    for (const child of svgCanvas.children) {
+      if (child === handlesGroup || child === boundsRect || child === marqueeRect) continue;
+      if (child.dataset && (child.dataset.bg || child.dataset.guides || child.dataset.pathAnchors || child.dataset.marquee)) continue;
+      const bb = bboxInCanvas(child);
+      if (!isFinite(bb.width) || !isFinite(bb.height)) continue;
+      const intersects = !(bb.x + bb.width < x1 || bb.x > x2 || bb.y + bb.height < y1 || bb.y > y2);
+      if (intersects) hits.push(child);
+    }
+    if (drag.additive) {
+      selection = drag.prevSelection.slice();
+      for (const el of hits) if (!selection.includes(el)) selection.push(el);
+    } else {
+      selection = hits;
+    }
+    updateHandles();
+    handlesGroup.style.display = selection.length ? '' : 'none';
+    refreshElementList();
+    if (selection.length === 1) populateProps(selection[0]);
+    else if (selection.length > 1) propsPanel.innerHTML = `<div class="empty">${selection.length} elements selected</div>`;
+    else propsPanel.innerHTML = '<div class="empty">Select an element</div>';
+    drag = null;
+    return;
+  }
   if (drag && drag.mode === 'resize' && selection.length === 1) {
     drag.startBBox = selection[0].getBBox();
   }
-  if (drag && drag.mode === 'move') clearGuides();
+  if (drag && (drag.mode === 'move' || drag.mode === 'resize')) clearGuides();
   drag = null;
 });
 
