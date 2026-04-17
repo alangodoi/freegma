@@ -1,6 +1,6 @@
 # Freegma
 
-Standalone SVG editor. Build, edit, and save vector drawings with a visual interface. Fully client-side — the server is a thin static host. Each user works locally in their own browser, and each drawing has its own canvas size (like Figma frames).
+Standalone SVG editor. Build, edit, and save vector drawings with a visual interface. Fully client-side — the server is a thin static host. Each user works locally in their own browser, and each drawing has its own canvas size.
 
 ## Quick Start
 
@@ -8,8 +8,6 @@ Standalone SVG editor. Build, edit, and save vector drawings with a visual inter
 bun install
 bun start
 ```
-
-Open <http://localhost:3001>
 
 ## Features
 
