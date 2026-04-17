@@ -2284,8 +2284,14 @@ function resizeElement(el, dx, dy, h, bb) {
     if (w > 2) { el.setAttribute('x', x); el.setAttribute('width', w); }
     if (ht > 2) { el.setAttribute('y', y); el.setAttribute('height', ht); }
   } else if (tag === 'circle') {
+    // Grow-direction sign per axis, based on which handle is being dragged.
+    // "e"/"s" => +, "w"/"n" => -, side-only handles have the other axis = 0.
+    const signX = h.includes('e') ? 1 : h.includes('w') ? -1 : 0;
+    const signY = h.includes('s') ? 1 : h.includes('n') ? -1 : 0;
+    const drX = dx * signX;
+    const drY = dy * signY;
+    const dr = Math.abs(drX) > Math.abs(drY) ? drX : drY;
     const r = parseFloat(el.getAttribute('r')||0);
-    const dr = (Math.abs(dx) > Math.abs(dy) ? dx : -dy) * (h.includes('w') || h.includes('n') ? -1 : 1);
     el.setAttribute('r', Math.max(2, r + dr));
   } else if (tag === 'ellipse') {
     let rx = parseFloat(el.getAttribute('rx')||0), ry = parseFloat(el.getAttribute('ry')||0);
