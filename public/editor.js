@@ -48,6 +48,8 @@ if (drawColor) {
 const canvasWInp   = document.getElementById('canvasW');
 const canvasHInp   = document.getElementById('canvasH');
 const sizePresets  = document.getElementById('sizePresets');
+const canvasBg     = document.getElementById('canvasBg');
+const canvasBgNone = document.getElementById('canvasBgNone');
 
 // --- Visible bounds rect (icon viewport) ---
 const boundsRect = document.createElementNS(SVG_NS, 'rect');
@@ -288,7 +290,64 @@ function setRectLike(el, patch) {
 function applyBoundsRect() {
   boundsRect.setAttribute('width', currentW);
   boundsRect.setAttribute('height', currentH);
+  const bg = getBgRect();
+  if (bg) {
+    bg.setAttribute('width',  String(currentW));
+    bg.setAttribute('height', String(currentH));
+  }
 }
+
+function getBgRect() {
+  return svgCanvas.querySelector(':scope > [data-bg="1"]');
+}
+
+function setCanvasBg(color) {
+  let r = getBgRect();
+  if (!color && !r) return;
+  pushUndo();
+  if (!color) {
+    r.remove();
+    syncCanvasBgSwatch();
+    persistCurrent();
+    refreshIconList();
+    return;
+  }
+  if (!r) {
+    r = document.createElementNS(SVG_NS, 'rect');
+    r.dataset.bg = '1';
+    r.setAttribute('x', '0');
+    r.setAttribute('y', '0');
+    r.setAttribute('width',  String(currentW));
+    r.setAttribute('height', String(currentH));
+    r.style.pointerEvents = 'none';
+    svgCanvas.insertBefore(r, svgCanvas.firstChild);
+  } else if (svgCanvas.firstChild !== r) {
+    svgCanvas.insertBefore(r, svgCanvas.firstChild);
+  }
+  r.setAttribute('fill', color);
+  syncCanvasBgSwatch();
+  persistCurrent();
+  refreshIconList();
+}
+
+function syncCanvasBgSwatch() {
+  if (!canvasBg) return;
+  const r = getBgRect();
+  const fill = r ? r.getAttribute('fill') : null;
+  canvasBg.dataset.value = fill || '#ffffff';
+  canvasBg.style.setProperty('--swatch-color', fill || 'transparent');
+  canvasBg.classList.toggle('is-empty', !fill);
+}
+
+if (canvasBg) {
+  canvasBg.addEventListener('click', () => {
+    openColorPicker(canvasBg, {
+      value: canvasBg.dataset.value || '#ffffff',
+      onChange: setCanvasBg,
+    });
+  });
+}
+if (canvasBgNone) canvasBgNone.addEventListener('click', () => setCanvasBg(null));
 
 function resetViewboxToFit() {
   const pad = Math.max(50, Math.round(Math.max(currentW, currentH) * 0.1));
@@ -875,6 +934,9 @@ function loadDrawing(id) {
   svgCanvas.appendChild(pathAnchorsGroup);
   svgCanvas.appendChild(handlesGroup);
   handlesGroup.style.display = 'none';
+  const bgOnLoad = getBgRect();
+  if (bgOnLoad) bgOnLoad.style.pointerEvents = 'none';
+  syncCanvasBgSwatch();
   clearGuides();
   clearPathAnchors();
   resetViewboxToFit();
@@ -934,7 +996,11 @@ function refreshIconList() {
 
 function refreshElementList() {
   elementList.innerHTML = '';
-  const els = Array.from(svgCanvas.children).filter(c => c !== handlesGroup && c !== boundsRect);
+  const els = Array.from(svgCanvas.children).filter(c => {
+    if (c === handlesGroup || c === boundsRect) return false;
+    if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors)) return false;
+    return true;
+  });
   if (els.length === 0) {
     elementList.innerHTML = '<div class="empty">No shapes yet</div>';
     return;
@@ -1479,6 +1545,10 @@ function startCanvasPick() {
       let t = e.target;
       while (t && t !== svgCanvas) {
         if (t.dataset && (t.dataset.bounds || t.dataset.handles || t.dataset.pathAnchors)) { t = null; break; }
+        if (t.tagName && t.tagName.toLowerCase() === 'image') {
+          const fromImg = cpSamplePixelFromImage(t, e.clientX, e.clientY);
+          if (fromImg) { picked = fromImg; break; }
+        }
         const raw = getPaint(t, 'fill') || getPaint(t, 'stroke');
         if (raw && raw !== 'none') { picked = hexColor(raw); break; }
         t = t.parentElement;
@@ -1502,7 +1572,7 @@ function cpCollectCanvasColors() {
   const walk = (el) => {
     if (!el) return;
     const d = el.dataset;
-    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides)) return;
+    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides || d.bg)) return;
     for (const attr of ['fill', 'stroke']) {
       const v = getPaint(el, attr);
       if (v && v !== 'none') {
@@ -1516,17 +1586,149 @@ function cpCollectCanvasColors() {
   return Array.from(set);
 }
 
+// Cache of raster <img> by href + extracted colors. Lets the eyedropper
+// sample pixels from SVG <image> elements and seeds the palette with
+// dominant image colors.
+const cpImageCache = new Map();
+
+function cpLoadImage(href, onReady) {
+  if (!href) return null;
+  let entry = cpImageCache.get(href);
+  if (!entry) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    entry = { img, colors: null };
+    cpImageCache.set(href, entry);
+    if (onReady) img.addEventListener('load', () => onReady(entry), { once: true });
+    img.addEventListener('error', () => {}, { once: true });
+    img.src = href;
+  } else if (onReady && (!entry.img.complete || !entry.img.naturalWidth)) {
+    // Still loading — queue the callback. Never call it synchronously, so
+    // callers that re-enter cpRenderPalette can't produce infinite recursion.
+    entry.img.addEventListener('load', () => onReady(entry), { once: true });
+  }
+  return entry;
+}
+
+function cpSamplePixelFromImage(imgEl, clientX, clientY) {
+  const href = imgEl.getAttribute('href') || imgEl.getAttribute('xlink:href');
+  if (!href) return null;
+  const entry = cpLoadImage(href);
+  if (!entry || !entry.img.complete || !entry.img.naturalWidth) return null;
+  // Map client coords into the image's local user-space (handles rotation/scale).
+  const ctm = imgEl.getScreenCTM();
+  if (!ctm) return null;
+  const pt = svgCanvas.createSVGPoint();
+  pt.x = clientX; pt.y = clientY;
+  const local = pt.matrixTransform(ctm.inverse());
+  const rx = parseFloat(imgEl.getAttribute('x') || 0);
+  const ry = parseFloat(imgEl.getAttribute('y') || 0);
+  const rw = parseFloat(imgEl.getAttribute('width')  || 0);
+  const rh = parseFloat(imgEl.getAttribute('height') || 0);
+  if (!rw || !rh) return null;
+  // Respect preserveAspectRatio="xMidYMid meet" (our default for pasted images).
+  const iw = entry.img.naturalWidth;
+  const ih = entry.img.naturalHeight;
+  const par = (imgEl.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
+  let renderedX = rx, renderedY = ry, renderedW = rw, renderedH = rh;
+  if (par !== 'none') {
+    const sc = Math.min(rw / iw, rh / ih);
+    renderedW = iw * sc;
+    renderedH = ih * sc;
+    renderedX = rx + (rw - renderedW) / 2;
+    renderedY = ry + (rh - renderedH) / 2;
+  }
+  const sx = Math.floor((local.x - renderedX) / renderedW * iw);
+  const sy = Math.floor((local.y - renderedY) / renderedH * ih);
+  if (sx < 0 || sx >= iw || sy < 0 || sy >= ih) return null;
+  const c = document.createElement('canvas');
+  c.width = 1; c.height = 1;
+  const ctx = c.getContext('2d');
+  try {
+    ctx.drawImage(entry.img, sx, sy, 1, 1, 0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    if (d[3] < 8) return null;
+    return cpRgbToHex(d[0], d[1], d[2]);
+  } catch { return null; }
+}
+
+function cpExtractImageColors(img) {
+  const maxDim = 64;
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if (!iw || !ih) return [];
+  const scale = Math.min(maxDim / iw, maxDim / ih, 1);
+  const w = Math.max(1, Math.floor(iw * scale));
+  const h = Math.max(1, Math.floor(ih * scale));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  try { ctx.drawImage(img, 0, 0, w, h); } catch { return []; }
+  let pixels;
+  try { pixels = ctx.getImageData(0, 0, w, h).data; } catch { return []; }
+  const buckets = new Map();
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i+3] < 128) continue;
+    const key = (pixels[i] & 0xE0) << 16 | (pixels[i+1] & 0xE0) << 8 | (pixels[i+2] & 0xE0);
+    buckets.set(key, (buckets.get(key) || 0) + 1);
+  }
+  // Keep the top N quantized colors, but skip candidates that are too close
+  // to one we already picked — otherwise anti-aliased halos of a big region
+  // (e.g. the red background with white logo edges) can eat all the slots.
+  const ordered = [...buckets.entries()].sort((a, b) => b[1] - a[1]);
+  const picked = [];
+  const minDistSq = 60 * 60; // perceptual-ish threshold in unquantized RGB
+  for (const [key] of ordered) {
+    const r = (key >> 16) & 0xFF;
+    const g = (key >> 8)  & 0xFF;
+    const b = key & 0xFF;
+    let tooClose = false;
+    for (const p of picked) {
+      const dr = r - p[0], dg = g - p[1], db = b - p[2];
+      if (dr * dr + dg * dg + db * db < minDistSq) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
+    picked.push([r, g, b]);
+    if (picked.length >= 8) break;
+  }
+  return picked.map(([r, g, b]) => cpRgbToHex(r, g, b).toUpperCase());
+}
+
+function cpCollectImageColors(onLate) {
+  const out = [];
+  const imgs = svgCanvas.querySelectorAll('image');
+  for (const el of imgs) {
+    if (el.closest('[data-handles], [data-bounds], [data-path-anchors], [data-guides]')) continue;
+    const href = el.getAttribute('href') || el.getAttribute('xlink:href');
+    if (!href) continue;
+    const entry = cpLoadImage(href, (e) => {
+      if (!e.colors) e.colors = cpExtractImageColors(e.img);
+      onLate && onLate();
+    });
+    if (entry && entry.img.complete && entry.img.naturalWidth > 0) {
+      if (!entry.colors) entry.colors = cpExtractImageColors(entry.img);
+      for (const c of entry.colors) out.push(c);
+    }
+  }
+  return out;
+}
+
 function cpRenderPalette() {
   cpPalette.innerHTML = '';
-  const colors = cpCollectCanvasColors();
-  if (!colors.length) {
+  const reRender = () => {
+    if (!colorPopover.classList.contains('hidden')) cpRenderPalette();
+  };
+  const merged = [...cpCollectCanvasColors(), ...cpCollectImageColors(reRender)];
+  const seen = new Set();
+  const uniq = [];
+  for (const c of merged) { if (!seen.has(c)) { seen.add(c); uniq.push(c); } }
+  if (!uniq.length) {
     const empty = document.createElement('span');
     empty.className = 'cp-palette-empty';
     empty.textContent = 'No colors yet';
     cpPalette.appendChild(empty);
     return;
   }
-  for (const c of colors) {
+  for (const c of uniq) {
     const sw = document.createElement('button');
     sw.type = 'button';
     sw.className = 'cp-swatch';
@@ -2037,7 +2239,12 @@ svgCanvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) return;
   const tgt = e.target;
 
-  if (pendingShape && e.button === 0) {
+  // Handle-corner drags and path-anchor drags take precedence over an armed
+  // draw tool — otherwise grabbing a resize handle with e.g. the rect tool
+  // armed would start drawing a tiny rect instead of resizing.
+  const isHandleHit = tgt.dataset && (tgt.dataset.handle || tgt.dataset.paCmd !== undefined);
+
+  if (pendingShape && e.button === 0 && !isHandleHit) {
     e.preventDefault(); e.stopPropagation();
     const sp = svgPt(e);
     pushUndo();
