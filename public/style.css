@@ -43,6 +43,11 @@ body {
   flex-shrink: 0;
 }
 #topbar .brand { display: flex; align-items: center; gap: var(--s3); }
+#topbar .title-logo {
+  height: 22px;
+  width: auto;
+  display: block;
+}
 #topbar .title {
   font-weight: 600; font-size: 12px; letter-spacing: 2px;
   color: var(--accent);
