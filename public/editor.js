@@ -29,10 +29,20 @@ const drawColor    = document.getElementById('drawColor');
 const drawColorHex = document.getElementById('drawColorHex');
 const addShapeRow  = document.getElementById('addShapeRow');
 
-if (drawColorHex) {
-  drawColorHex.textContent = drawColor.value.toUpperCase();
-  drawColor.addEventListener('input', () => {
-    drawColorHex.textContent = drawColor.value.toUpperCase();
+// Color applied to newly added shapes. Driven via the sidebar swatch button.
+let newFillColor = (drawColor && drawColor.dataset.value) || '#888888';
+function setNewFillColor(hex) {
+  newFillColor = hex;
+  if (drawColor) {
+    drawColor.dataset.value = hex;
+    drawColor.style.setProperty('--swatch-color', hex);
+  }
+  if (drawColorHex) drawColorHex.textContent = hex.toUpperCase();
+}
+setNewFillColor(newFillColor);
+if (drawColor) {
+  drawColor.addEventListener('click', () => {
+    openColorPicker(drawColor, { value: newFillColor, onChange: setNewFillColor });
   });
 }
 const canvasWInp   = document.getElementById('canvasW');
@@ -920,7 +930,7 @@ function refreshElementList() {
     return;
   }
   els.forEach((el, i) => {
-    const fill = el.getAttribute('fill') || el.getAttribute('stroke') || '#888';
+    const fill = getPaint(el, 'fill') || getPaint(el, 'stroke') || '#888';
     const isSel = selection.includes(el);
     const row = document.createElement('div');
     row.className = 'elem-item' + (isSel ? ' active' : '');
@@ -1258,11 +1268,326 @@ function renderPathAnchors(el) {
 // Properties panel
 // =============================================================
 
+// Read fill/stroke preferring inline style (which overrides SVG attributes)
+// so the UI reflects what's actually rendered for imported markup.
+function getPaint(el, kind) {
+  const s = el.style && el.style[kind];
+  if (s) return s;
+  return el.getAttribute(kind);
+}
+
+// Set fill/stroke authoritatively: clear any inline style for the property,
+// then write the attribute. Pass null to remove it.
+function setPaint(el, kind, value) {
+  if (el.style && el.style[kind]) el.style[kind] = '';
+  if (value === null || value === undefined) el.removeAttribute(kind);
+  else el.setAttribute(kind, value);
+}
+
 function hexColor(c) {
   if (!c || c === 'none') return '#000000';
   if (c.startsWith('#') && c.length === 7) return c;
   if (c.startsWith('#') && c.length === 4) return '#' + c[1]+c[1]+c[2]+c[2]+c[3]+c[3];
+  if (c.startsWith('rgb')) {
+    const m = c.match(/-?\d+(\.\d+)?/g);
+    if (m && m.length >= 3) {
+      const r = +m[0], g = +m[1], b = +m[2];
+      return '#' + [r, g, b].map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+    }
+  }
   return '#888888';
+}
+
+// =============================================================
+// Color picker popover (shared by sidebar + properties swatches)
+// =============================================================
+
+const colorPopover = document.createElement('div');
+colorPopover.id = 'colorPopover';
+colorPopover.className = 'hidden';
+colorPopover.innerHTML = `
+  <div class="cp-sv">
+    <div class="cp-sv-sat"></div>
+    <div class="cp-sv-val"></div>
+    <div class="cp-sv-thumb"></div>
+  </div>
+  <div class="cp-hue">
+    <div class="cp-hue-thumb"></div>
+  </div>
+  <div class="cp-row">
+    <input class="cp-hex" type="text" maxlength="7" spellcheck="false" autocomplete="off">
+    <button type="button" class="cp-pick" data-hint="Pick a color from anywhere on screen">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.5 2 L14 5.5 L12 7.5 L8.5 4 Z"/>
+        <path d="M12 7.5 L6 13.5 L3 14.5 L2 13.5 L3 10.5 L9 4.5"/>
+      </svg>
+    </button>
+  </div>
+  <div class="cp-palette-label">In this drawing</div>
+  <div class="cp-palette"></div>
+`;
+document.body.appendChild(colorPopover);
+
+const cpSV      = colorPopover.querySelector('.cp-sv');
+const cpSat     = colorPopover.querySelector('.cp-sv-sat');
+const cpSVThumb = colorPopover.querySelector('.cp-sv-thumb');
+const cpHue     = colorPopover.querySelector('.cp-hue');
+const cpHueThumb= colorPopover.querySelector('.cp-hue-thumb');
+const cpHex     = colorPopover.querySelector('.cp-hex');
+const cpPick    = colorPopover.querySelector('.cp-pick');
+const cpPalette = colorPopover.querySelector('.cp-palette');
+
+const cpState = { h: 0, s: 0, v: 0.5, onChange: null, anchor: null };
+
+function cpHsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60)       [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else              [r, g, b] = [c, 0, x];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+function cpRgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r)      h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+function cpHexToRgb(hex) {
+  if (!hex) return null;
+  let h = hex.trim();
+  if (h[0] === '#') h = h.slice(1);
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  if (h.length !== 6 || !/^[0-9a-f]{6}$/i.test(h)) return null;
+  return [parseInt(h.slice(0,2), 16), parseInt(h.slice(2,4), 16), parseInt(h.slice(4,6), 16)];
+}
+
+function cpRgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+}
+
+function cpRender({ syncHex = true } = {}) {
+  const { h, s, v } = cpState;
+  cpSat.style.background = `linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))`;
+  cpSVThumb.style.left = (s * 100) + '%';
+  cpSVThumb.style.top  = ((1 - v) * 100) + '%';
+  cpHueThumb.style.left = ((h / 360) * 100) + '%';
+  const [r, g, b] = cpHsvToRgb(h, s, v);
+  const hex = cpRgbToHex(r, g, b);
+  cpSVThumb.style.background = hex;
+  if (syncHex) cpHex.value = hex.toUpperCase();
+  return hex;
+}
+
+function cpEmit() {
+  const hex = cpRender();
+  if (cpState.onChange) cpState.onChange(hex);
+}
+
+function cpSetFromHex(hex, { syncHex = true } = {}) {
+  const rgb = cpHexToRgb(hex);
+  if (!rgb) return null;
+  const [h, s, v] = cpRgbToHsv(...rgb);
+  // Preserve hue when the input is achromatic so the hue slider doesn't jump to 0.
+  if (s > 0) cpState.h = h;
+  cpState.s = s; cpState.v = v;
+  cpRender({ syncHex });
+  return cpRgbToHex(...rgb);
+}
+
+function cpDrag(el, handler) {
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const apply = (ev) => {
+      const x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (ev.clientY - rect.top)  / rect.height));
+      handler(x, y);
+    };
+    apply(e);
+    const up = () => {
+      window.removeEventListener('mousemove', apply);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', apply);
+    window.addEventListener('mouseup', up);
+  });
+}
+
+cpDrag(cpSV,  (x, y) => { cpState.s = x; cpState.v = 1 - y; cpEmit(); });
+cpDrag(cpHue, (x)    => { cpState.h = x * 360;              cpEmit(); });
+
+cpHex.addEventListener('input', () => {
+  const normalized = cpSetFromHex(cpHex.value, { syncHex: false });
+  if (normalized && cpState.onChange) cpState.onChange(normalized);
+});
+
+// Element-based eyedropper: click any shape on the canvas to grab its paint.
+// Works across browsers (doesn't rely on the window.EyeDropper API) and picks
+// the SVG element's actual fill/stroke rather than a blended rendered pixel.
+cpPick.dataset.hint = 'Pick a color from a shape on the canvas (Esc to cancel)';
+cpPick.addEventListener('click', () => startCanvasPick());
+
+function startCanvasPick() {
+  const anchor = cpState.anchor;
+  const onChange = cpState.onChange;
+  const originalHex = cpRender();
+  closeColorPicker();
+  document.body.classList.add('cp-picking');
+
+  const reopen = (hex) => {
+    if (anchor) openColorPicker(anchor, { value: hex, onChange });
+  };
+  const cleanup = () => {
+    document.body.classList.remove('cp-picking');
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
+  };
+  const onDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cleanup();
+    let picked = null;
+    if (canvasInner.contains(e.target)) {
+      let t = e.target;
+      while (t && t !== svgCanvas) {
+        if (t.dataset && (t.dataset.bounds || t.dataset.handles || t.dataset.pathAnchors)) { t = null; break; }
+        const raw = getPaint(t, 'fill') || getPaint(t, 'stroke');
+        if (raw && raw !== 'none') { picked = hexColor(raw); break; }
+        t = t.parentElement;
+      }
+    }
+    if (picked && onChange) onChange(picked);
+    reopen(picked || originalHex);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); cleanup(); reopen(originalHex); }
+  };
+  // Defer one tick so the button's own mousedown/click doesn't trigger us.
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+  }, 0);
+}
+
+function cpCollectCanvasColors() {
+  const set = new Set();
+  const walk = (el) => {
+    if (!el) return;
+    const d = el.dataset;
+    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides)) return;
+    for (const attr of ['fill', 'stroke']) {
+      const v = getPaint(el, attr);
+      if (v && v !== 'none') {
+        const rgb = cpHexToRgb(hexColor(v));
+        if (rgb) set.add(cpRgbToHex(...rgb).toUpperCase());
+      }
+    }
+    for (const child of el.children || []) walk(child);
+  };
+  for (const child of svgCanvas.children) walk(child);
+  return Array.from(set);
+}
+
+function cpRenderPalette() {
+  cpPalette.innerHTML = '';
+  const colors = cpCollectCanvasColors();
+  if (!colors.length) {
+    const empty = document.createElement('span');
+    empty.className = 'cp-palette-empty';
+    empty.textContent = 'No colors yet';
+    cpPalette.appendChild(empty);
+    return;
+  }
+  for (const c of colors) {
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.className = 'cp-swatch';
+    sw.style.background = c;
+    sw.title = c;
+    sw.addEventListener('click', () => {
+      const hex = cpSetFromHex(c);
+      if (hex && cpState.onChange) cpState.onChange(hex);
+    });
+    cpPalette.appendChild(sw);
+  }
+}
+
+function openColorPicker(anchorEl, { value, onChange }) {
+  cpState.anchor = anchorEl;
+  cpState.onChange = onChange;
+  cpSetFromHex(value || '#888888');
+  cpRenderPalette();
+  colorPopover.classList.remove('hidden');
+  // Measure after reveal so offsetHeight is accurate.
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const pw = colorPopover.offsetWidth  || 228;
+  const ph = colorPopover.offsetHeight || 300;
+  const margin = 6;
+  let left = anchorRect.left - pw - margin;
+  if (left < 4) left = anchorRect.right + margin;
+  if (left + pw > window.innerWidth - 4) left = window.innerWidth - pw - 4;
+  if (left < 4) left = 4;
+  let top = anchorRect.top;
+  if (top + ph > window.innerHeight - 4) top = window.innerHeight - ph - 4;
+  if (top < 4) top = 4;
+  colorPopover.style.left = left + 'px';
+  colorPopover.style.top  = top  + 'px';
+}
+
+function closeColorPicker() {
+  colorPopover.classList.add('hidden');
+  cpState.onChange = null;
+  cpState.anchor = null;
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (colorPopover.classList.contains('hidden')) return;
+  if (colorPopover.contains(e.target)) return;
+  if (cpState.anchor && cpState.anchor.contains(e.target)) return;
+  closeColorPicker();
+}, true);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !colorPopover.classList.contains('hidden')) closeColorPicker();
+});
+
+function makeSwatchButton({ value, hint, onChange }) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'swatch-btn';
+  if (hint) btn.dataset.hint = hint;
+  btn.dataset.value = value;
+  btn.style.setProperty('--swatch-color', value);
+  btn.innerHTML = '<span class="swatch-fill"></span>';
+  btn.addEventListener('click', () => {
+    openColorPicker(btn, {
+      value: btn.dataset.value,
+      onChange: (hex) => {
+        btn.dataset.value = hex;
+        btn.style.setProperty('--swatch-color', hex);
+        onChange(hex);
+      }
+    });
+  });
+  return btn;
 }
 
 // ---- Prop panel builders --------------------------------------------------
@@ -1304,16 +1629,16 @@ function populateProps(el) {
   // ---- Fill ----
   {
     const { row, ctrl } = field('Fill');
-    const inp = document.createElement('input');
-    inp.type = 'color';
-    inp.value = hexColor(el.getAttribute('fill'));
-    inp.dataset.hint = 'Fill color';
-    inp.addEventListener('input', () => { el.setAttribute('fill', inp.value); refreshElementList(); });
-    ctrl.appendChild(inp);
+    const swatch = makeSwatchButton({
+      value: hexColor(getPaint(el, 'fill')),
+      hint: 'Fill color',
+      onChange: (hex) => { setPaint(el, 'fill', hex); refreshElementList(); },
+    });
+    ctrl.appendChild(swatch);
     const none = document.createElement('button');
     none.textContent = 'None';
     none.dataset.hint = 'Set fill to transparent';
-    none.addEventListener('click', () => { el.setAttribute('fill', 'none'); refreshElementList(); });
+    none.addEventListener('click', () => { setPaint(el, 'fill', 'none'); refreshElementList(); });
     ctrl.appendChild(none);
     propsPanel.appendChild(row);
   }
@@ -1322,18 +1647,18 @@ function populateProps(el) {
   let borderWInp;
   {
     const { row, ctrl } = field('Border');
-    const cInp = document.createElement('input');
-    cInp.type = 'color';
-    cInp.value = hexColor(el.getAttribute('stroke'));
-    cInp.dataset.hint = 'Border color';
-    cInp.addEventListener('input', () => {
-      el.setAttribute('stroke', cInp.value);
-      if (!parseFloat(el.getAttribute('stroke-width'))) {
-        el.setAttribute('stroke-width', '1');
-        if (borderWInp) borderWInp.value = '1';
-      }
+    const swatch = makeSwatchButton({
+      value: hexColor(getPaint(el, 'stroke')),
+      hint: 'Border color',
+      onChange: (hex) => {
+        setPaint(el, 'stroke', hex);
+        if (!parseFloat(el.getAttribute('stroke-width'))) {
+          el.setAttribute('stroke-width', '1');
+          if (borderWInp) borderWInp.value = '1';
+        }
+      },
     });
-    ctrl.appendChild(cInp);
+    ctrl.appendChild(swatch);
     const wMini = miniInput('W', el.getAttribute('stroke-width') || '0', {
       min: 0,
       hint: 'Border width (0 hides it)',
@@ -1345,7 +1670,7 @@ function populateProps(el) {
     none.textContent = 'None';
     none.dataset.hint = 'Remove border';
     none.addEventListener('click', () => {
-      el.removeAttribute('stroke');
+      setPaint(el, 'stroke', null);
       el.setAttribute('stroke-width', '0');
       borderWInp.value = '0';
     });
@@ -1708,7 +2033,7 @@ svgCanvas.addEventListener('mousedown', (e) => {
     pushUndo();
     const tag = pendingShape.tag;
     const el = document.createElementNS(SVG_NS, tag);
-    const c = drawColor.value;
+    const c = newFillColor;
     if (tag === 'line') { el.setAttribute('stroke', c); el.setAttribute('stroke-width', Math.max(2, Math.min(currentW, currentH) * 0.012)); }
     else el.setAttribute('fill', c);
     setDrawGeometry(el, tag, sp.x, sp.y, sp.x, sp.y);
