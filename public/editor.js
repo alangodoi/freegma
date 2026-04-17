@@ -2794,11 +2794,6 @@ renameInput.addEventListener('keydown', (e) => {
 renameDialog.addEventListener('click', (e) => {
   if (e.target === renameDialog) closeRenameDialog();
 });
-document.getElementById('btnCopy').addEventListener('click', () => {
-  navigator.clipboard.writeText(cleanClone().outerHTML).then(() => {
-    flashButton('btnCopy', 'COPIED!');
-  });
-});
 document.getElementById('btnScale').addEventListener('click', () => {
   const raw = prompt(`Scale drawing — new size (WxH or single factor like "2x"):`, `${currentW}x${currentH}`);
   if (raw === null) return;

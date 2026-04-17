@@ -31,7 +31,6 @@ Open <http://localhost:3001>
 - **Download** — saves current drawing as an `.svg` file via the browser
 - **Import** — file picker (multi-select supported) or paste markup
 - **Rename / Remove** — manage session drawings
-- **Copy SVG** — clipboard with cleaned markup (`viewBox="0 0 W H"`, proper `width`/`height`)
 
 ## Notes
 
