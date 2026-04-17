@@ -913,7 +913,7 @@ function persistCurrent() {
   drawings[currentId].height = currentH;
 }
 
-function newDrawing(width = 512, height = 512) {
+function newDrawing(width = 512, height = 512, name = null) {
   persistCurrent();
   selection = [];
   currentW = width;
@@ -930,7 +930,7 @@ function newDrawing(width = 512, height = 512) {
   clearGuides();
   clearPathAnchors();
   resetViewboxToFit();
-  currentId = uniqueUntitledName();
+  currentId = name && !drawings[name] ? name : uniqueUntitledName();
   drawings[currentId] = { svg: cleanClone().outerHTML, width, height };
   refreshIconList();
   refreshElementList();
@@ -2663,13 +2663,101 @@ canvasHInp.addEventListener('change', () => setCanvasSize(currentW, parseFloat(c
 // Top bar buttons
 // =============================================================
 
-document.getElementById('btnNew').addEventListener('click', () => {
-  const raw = prompt('Canvas size (WxH):', `${currentW}x${currentH}`);
-  if (raw === null) return;
-  const m = String(raw).match(/^\s*(\d+)\s*[x×*]\s*(\d+)\s*$/i);
-  if (!m) { newDrawing(); return; }
-  newDrawing(parseInt(m[1], 10), parseInt(m[2], 10));
-});
+document.getElementById('btnNew').addEventListener('click', openNewDialog);
+
+// New drawing dialog
+const newDialog      = document.getElementById('newDialog');
+const newW           = document.getElementById('newW');
+const newH           = document.getElementById('newH');
+const newName        = document.getElementById('newName');
+const newError       = document.getElementById('newError');
+const newPresetGrid  = document.getElementById('newPresetGrid');
+
+const NEW_PRESETS = [
+  { label: 'Icon 16',    w: 16,   h: 16   },
+  { label: 'Icon 24',    w: 24,   h: 24   },
+  { label: 'Icon 48',    w: 48,   h: 48   },
+  { label: 'Square',     w: 512,  h: 512  },
+  { label: 'Square 2×',  w: 1024, h: 1024 },
+  { label: 'Widescreen', w: 1920, h: 1080 },
+  { label: 'IG Feed 4:5',w: 1080, h: 1350 },
+  { label: 'IG Story 9:16', w: 1080, h: 1920 },
+  { label: 'X Banner',   w: 1500, h: 500  },
+  { label: 'YT Thumb',   w: 1280, h: 720  },
+  { label: 'YT Banner',  w: 2560, h: 1440 },
+  { label: 'A4 @300dpi', w: 2480, h: 3508 },
+];
+
+function renderNewPresets() {
+  newPresetGrid.innerHTML = '';
+  const selW = +newW.value, selH = +newH.value;
+  for (const p of NEW_PRESETS) {
+    const t = document.createElement('button');
+    t.type = 'button';
+    const active = p.w === selW && p.h === selH;
+    t.className = 'new-size-tile' + (active ? ' active' : '');
+    const shape = document.createElement('div'); shape.className = 'tile-shape';
+    const aspect = document.createElement('div'); aspect.className = 'tile-aspect';
+    const maxD = 28;
+    const ratio = p.w / p.h;
+    const aw = ratio >= 1 ? maxD : Math.round(maxD * ratio);
+    const ah = ratio >= 1 ? Math.round(maxD / ratio) : maxD;
+    aspect.style.width  = Math.max(6, aw) + 'px';
+    aspect.style.height = Math.max(6, ah) + 'px';
+    shape.appendChild(aspect);
+    const lbl = document.createElement('div'); lbl.className = 'tile-label'; lbl.textContent = p.label;
+    const dim = document.createElement('div'); dim.className = 'tile-dim';   dim.textContent = `${p.w}×${p.h}`;
+    t.appendChild(shape); t.appendChild(lbl); t.appendChild(dim);
+    t.addEventListener('click', () => {
+      newW.value = String(p.w);
+      newH.value = String(p.h);
+      renderNewPresets();
+    });
+    newPresetGrid.appendChild(t);
+  }
+}
+
+function openNewDialog() {
+  newW.value = String(currentW || 512);
+  newH.value = String(currentH || 512);
+  newName.value = '';
+  newError.style.display = 'none';
+  newError.textContent = '';
+  renderNewPresets();
+  newDialog.classList.remove('hidden');
+  setTimeout(() => { newW.focus(); newW.select(); }, 0);
+}
+function closeNewDialog() { newDialog.classList.add('hidden'); }
+function commitNewDialog() {
+  const w = parseInt(newW.value, 10);
+  const h = parseInt(newH.value, 10);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1 || w > 100000 || h > 100000) {
+    newError.textContent = 'Width and height must be whole numbers between 1 and 100000.';
+    newError.style.display = '';
+    return;
+  }
+  const raw = (newName.value || '').trim();
+  const name = raw ? sanitizeName(raw) : null;
+  if (name && drawings[name]) {
+    newError.textContent = `"${name}" is already taken.`;
+    newError.style.display = '';
+    return;
+  }
+  closeNewDialog();
+  newDrawing(w, h, name);
+}
+
+newW.addEventListener('input', renderNewPresets);
+newH.addEventListener('input', renderNewPresets);
+document.getElementById('newCancel').addEventListener('click', closeNewDialog);
+document.getElementById('newOk').addEventListener('click', commitNewDialog);
+newDialog.addEventListener('click', (e) => { if (e.target === newDialog) closeNewDialog(); });
+for (const inp of [newW, newH, newName]) {
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); commitNewDialog(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeNewDialog(); }
+  });
+}
 const exportMenu = document.getElementById('exportMenu');
 document.getElementById('btnExport').addEventListener('click', (e) => {
   e.stopPropagation();

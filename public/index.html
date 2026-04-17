@@ -47,7 +47,7 @@
         </a>
       </div>
       <div class="actions">
-        <button id="btnNew" data-hint="Start a fresh drawing (prompts for canvas size)">+ New</button>
+        <button id="btnNew" data-hint="Create a new drawing (choose canvas size)">+ New</button>
         <button id="btnImport" data-hint="Load SVG files from disk or paste markup">Import</button>
         <div class="menu-wrap">
           <button id="btnExport" class="primary" data-hint="Export the current drawing to a file (SVG, PNG, or JPEG)">Export ▾</button>
@@ -165,6 +165,25 @@
       <div class="row end">
         <button id="importCancel">Cancel</button>
         <button id="importOk" class="primary">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New drawing dialog -->
+  <div id="newDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <div class="dialog-title">New drawing</div>
+      <div class="new-size-grid" id="newPresetGrid"></div>
+      <div class="new-size-row">
+        <div class="mini" data-hint="Canvas width in pixels"><span>W</span><input type="number" id="newW" min="1" step="1" value="512"></div>
+        <span class="times">×</span>
+        <div class="mini" data-hint="Canvas height in pixels"><span>H</span><input type="number" id="newH" min="1" step="1" value="512"></div>
+      </div>
+      <input type="text" id="newName" placeholder="Name (optional, lowercase letters/digits/_/-)" autocomplete="off" spellcheck="false">
+      <div class="muted" id="newError" style="color: var(--danger); display: none;"></div>
+      <div class="row end">
+        <button id="newCancel">Cancel</button>
+        <button id="newOk" class="primary">Create</button>
       </div>
     </div>
   </div>

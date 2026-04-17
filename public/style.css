@@ -613,6 +613,67 @@ textarea:focus { border-color: var(--bd-hi); }
   margin: 0;
 }
 
+/* ---- New drawing preset tiles ---- */
+.new-size-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: var(--s1);
+}
+.new-size-tile {
+  padding: 10px 6px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--bd);
+  border-radius: var(--r);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  transition: border-color .12s, background .12s, transform .08s;
+  color: var(--tx);
+  font-family: var(--ui);
+}
+.new-size-tile:hover {
+  border-color: var(--bd-hi);
+  background: var(--bg-input-hi);
+}
+.new-size-tile:active { transform: translateY(1px); }
+.new-size-tile.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.new-size-tile .tile-shape {
+  width: 40px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+}
+.new-size-tile .tile-aspect {
+  background: transparent;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.7;
+}
+.new-size-tile.active .tile-aspect { opacity: 1; }
+.new-size-tile .tile-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.new-size-tile .tile-dim {
+  font-size: 9px;
+  color: var(--tx-dim);
+  font-family: var(--mono);
+}
+.new-size-tile.active .tile-dim { color: var(--accent); opacity: 0.8; }
+.new-size-row {
+  display: flex; align-items: center; gap: var(--s1);
+  margin-top: var(--s1);
+}
+.new-size-row .mini { flex: 1; }
+
 /* ---- Export dropdown menu ---- */
 .menu-wrap { position: relative; display: inline-block; }
 .menu {
