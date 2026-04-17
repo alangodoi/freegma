@@ -46,6 +46,8 @@ body {
 #topbar .title-logo {
   height: 22px;
   width: auto;
+  aspect-ratio: 100 / 150;
+  flex-shrink: 0;
   display: block;
 }
 #topbar .title {
