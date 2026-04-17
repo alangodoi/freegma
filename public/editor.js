@@ -647,6 +647,11 @@ function scaleElement(el, sx, sy) {
     el.setAttribute('y1', mul('y1', sy));
     el.setAttribute('x2', mul('x2', sx));
     el.setAttribute('y2', mul('y2', sy));
+  } else if (tag === 'image') {
+    el.setAttribute('x', mul('x', sx));
+    el.setAttribute('y', mul('y', sy));
+    el.setAttribute('width',  mul('width',  sx));
+    el.setAttribute('height', mul('height', sy));
   } else if (tag === 'path') {
     if (el.dataset.rect === '1') {
       el.dataset.x = (+el.dataset.x || 0) * sx;
@@ -768,12 +773,17 @@ async function exportRaster(mime) {
     }
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     await new Promise((res) => {
+      const quality = mime === 'image/jpeg' ? 0.92
+                    : mime === 'image/webp' ? 0.95
+                    : undefined;
       canvas.toBlob((outBlob) => {
         if (!outBlob) { alert('Export failed — browser returned no image data.'); res(); return; }
-        const ext = mime === 'image/png' ? 'png' : 'jpg';
+        const ext = mime === 'image/png'  ? 'png'
+                  : mime === 'image/webp' ? 'webp'
+                  : 'jpg';
         triggerDownload(outBlob, `${name}.${ext}`);
         res();
-      }, mime, mime === 'image/jpeg' ? 0.92 : undefined);
+      }, mime, quality);
     });
     flashButton('btnExport', 'SAVED!');
   } finally {
@@ -2435,6 +2445,7 @@ exportMenu.addEventListener('click', (e) => {
   const fmt = btn.dataset.format;
   if (fmt === 'svg') exportSvg();
   else if (fmt === 'png') exportRaster('image/png');
+  else if (fmt === 'webp') exportRaster('image/webp');
   else if (fmt === 'jpeg') exportRaster('image/jpeg');
 });
 window.addEventListener('click', () => exportMenu.classList.add('hidden'));
@@ -2581,6 +2592,100 @@ document.addEventListener('mouseout', (e) => {
 });
 window.addEventListener('blur', hideHint);
 window.addEventListener('scroll', hideHint, true);
+
+// =============================================================
+// Paste images from clipboard
+// =============================================================
+
+window.addEventListener('paste', (e) => {
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const reader = new FileReader();
+      reader.onload = () => addImageToCanvas(String(reader.result));
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+function addImageToCanvas(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    pushUndo();
+    const nw = img.naturalWidth  || 100;
+    const nh = img.naturalHeight || 100;
+    const ratio = Math.min(currentW * 0.8 / nw, currentH * 0.8 / nh, 1);
+    const w = nw * ratio;
+    const h = nh * ratio;
+    const x = (currentW - w) / 2;
+    const y = (currentH - h) / 2;
+    const el = document.createElementNS(SVG_NS, 'image');
+    el.setAttribute('x', x.toFixed(1));
+    el.setAttribute('y', y.toFixed(1));
+    el.setAttribute('width',  w.toFixed(1));
+    el.setAttribute('height', h.toFixed(1));
+    el.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    el.setAttribute('href', dataUrl);
+    svgCanvas.insertBefore(el, handlesGroup);
+    persistCurrent();
+    selectElement(el);
+  };
+  img.onerror = () => alert('Could not load pasted image.');
+  img.src = dataUrl;
+}
+
+// =============================================================
+// GitHub star count badge
+// =============================================================
+
+(async function loadGithubStars() {
+  const badge = document.getElementById('ghStars');
+  const link  = document.querySelector('.gh-link');
+  if (!badge || !link) return;
+  const repo = link.dataset.repo;
+  if (!repo) return;
+  const countEl = badge.querySelector('.gh-stars-count');
+  const cacheKey = `ghStars:${repo}`;
+  const ttl = 10 * 60 * 1000; // 10 min
+
+  const format = (n) => n >= 1000 ? (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, '') + 'k' : String(n);
+  const show = (n) => {
+    countEl.textContent = format(n);
+    badge.classList.remove('hidden');
+  };
+
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const { count, ts } = JSON.parse(raw);
+      if (typeof count === 'number') {
+        show(count);
+        if (Date.now() - ts < ttl) return; // fresh — skip network
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}`, {
+      headers: { 'Accept': 'application/vnd.github+json' },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const count = data.stargazers_count;
+    if (typeof count !== 'number') return;
+    show(count);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ count, ts: Date.now() })); } catch {}
+  } catch {
+    // offline or rate-limited — leave badge as-is (hidden or showing cached value)
+  }
+})();
 
 // =============================================================
 // Boot

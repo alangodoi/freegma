@@ -68,6 +68,20 @@ body {
   background: var(--bg-input-hi);
 }
 #topbar .gh-link svg { width: 14px; height: 14px; display: block; }
+#topbar .gh-stars {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 6px;
+  margin-left: 2px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--tx);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+#topbar .gh-stars.hidden { display: none; }
+#topbar .gh-stars svg { width: 10px; height: 10px; color: #f1c232; }
 #topbar .actions { display: flex; gap: var(--s1); }
 
 /* ---- Buttons (base) ---- */
