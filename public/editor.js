@@ -1226,17 +1226,18 @@ function unionSelectionBox() {
 }
 
 function collectGuideRefs() {
-  const refs = [{
-    left: 0, right: currentW, cx: currentW / 2,
-    top: 0, bottom: currentH, cy: currentH / 2,
-  }];
+  const refs = [Object.assign(
+    { left: 0, right: currentW, cx: currentW / 2, top: 0, bottom: currentH, cy: currentH / 2 },
+    { id: 'canvas' },
+  )];
   const selSet = new Set(selection);
+  let i = 0;
   for (const child of svgCanvas.children) {
-    if (child.dataset && (child.dataset.bounds || child.dataset.handles || child.dataset.guides)) continue;
+    if (child.dataset && (child.dataset.bounds || child.dataset.handles || child.dataset.guides || child.dataset.marquee || child.dataset.pathAnchors || child.dataset.bg)) continue;
     if (selSet.has(child)) continue;
     const b = bboxInCanvas(child);
     if (!isFinite(b.width) || !isFinite(b.height)) continue;
-    refs.push(toBoxKeys(b));
+    refs.push(Object.assign(toBoxKeys(b), { id: `child-${i++}` }));
   }
   return refs;
 }
@@ -1268,25 +1269,137 @@ function computeSnap(hypo) {
   const vGuides = [], hGuides = [];
   for (const ref of refs) {
     for (const sk of xKeys) for (const rk of xKeys) {
-      if (Math.abs(snapped[sk] - ref[rk]) < eps) {
-        vGuides.push({
-          x: ref[rk],
-          y1: Math.min(snapped.top, ref.top),
-          y2: Math.max(snapped.bottom, ref.bottom),
-        });
-      }
+      if (Math.abs(snapped[sk] - ref[rk]) < eps) vGuides.push(buildVGuide(ref[rk], snapped, ref));
     }
     for (const sk of yKeys) for (const rk of yKeys) {
-      if (Math.abs(snapped[sk] - ref[rk]) < eps) {
-        hGuides.push({
-          y: ref[rk],
-          x1: Math.min(snapped.left, ref.left),
-          x2: Math.max(snapped.right, ref.right),
-        });
+      if (Math.abs(snapped[sk] - ref[rk]) < eps) hGuides.push(buildHGuide(ref[rk], snapped, ref));
+    }
+  }
+  const filteredV = keepNearestPerSide(vGuides, 'x');
+  const filteredH = keepNearestPerSide(hGuides, 'y');
+  const chainedV = collectChainedEqualGuides(filteredV, refs, 'v');
+  const chainedH = collectChainedEqualGuides(filteredH, refs, 'h');
+  return {
+    snapDx, snapDy,
+    vGuides: [...filteredV, ...chainedV],
+    hGuides: [...filteredH, ...chainedH],
+  };
+}
+
+// Build a vertical-line guide from a shared X between two boxes. Also
+// compute the perpendicular (Y-axis) edge-to-edge gap between the boxes
+// and the position for a distance label — null when they overlap vertically.
+function buildVGuide(x, snapped, ref) {
+  const y1 = Math.min(snapped.top, ref.top);
+  const y2 = Math.max(snapped.bottom, ref.bottom);
+  let distance = null, labelY = null, direction = null;
+  if (snapped.bottom < ref.top) {
+    distance = ref.top - snapped.bottom;
+    labelY = (snapped.bottom + ref.top) / 2;
+    direction = 'after';  // ref is below snapped
+  } else if (ref.bottom < snapped.top) {
+    distance = snapped.top - ref.bottom;
+    labelY = (ref.bottom + snapped.top) / 2;
+    direction = 'before'; // ref is above snapped
+  }
+  return { x, y1, y2, labelX: x, labelY, distance, direction, refId: ref.id };
+}
+
+// Drop hGuides whose gap spans over a nearer aligned ref on the same side.
+// E.g., when dragging the rightmost of three shapes, we keep the gap to the
+// middle shape and drop the "through-the-middle" gap to the leftmost one.
+// Chain guides (ref↔ref) are left alone.
+function keepNearestPerSide(guides, perpKey) {
+  const nearest = new Map();
+  const other = [];
+  const chainOrNull = [];
+  for (const g of guides) {
+    if (g.distance == null || !g.direction) { chainOrNull.push(g); continue; }
+    if (g.refId && String(g.refId).startsWith('chain-')) { other.push(g); continue; }
+    const k = `${Math.round(g[perpKey] * 100)}|${g.direction}`;
+    const prev = nearest.get(k);
+    if (!prev || g.distance < prev.distance) nearest.set(k, g);
+  }
+  return [...chainOrNull, ...other, ...nearest.values()];
+}
+
+// When the dragging shape's gap to one ref matches the gap between two OTHER
+// refs on the same alignment line, emit extra guide entries for those ref-ref
+// gaps. markEqualSpacing later tags them (and the original) as equal so they
+// all render in the equal-distance style.
+function collectChainedEqualGuides(existing, refs, kind) {
+  const extras = [];
+  const ALIGN_EPS = 1;   // how close "aligned on the same line" means
+  const MATCH_EPS = 0.5; // how close two gaps must be to count as the same
+  for (const g of existing) {
+    if (g.distance == null) continue;
+    if (kind === 'h') {
+      const sharedY = g.y;
+      const aligned = refs.filter(r =>
+        Math.abs(r.top - sharedY) < ALIGN_EPS ||
+        Math.abs(r.cy  - sharedY) < ALIGN_EPS ||
+        Math.abs(r.bottom - sharedY) < ALIGN_EPS,
+      );
+      aligned.sort((a, b) => a.left - b.left);
+      for (let i = 0; i < aligned.length - 1; i++) {
+        const a = aligned[i], b = aligned[i + 1];
+        const gap = b.left - a.right;
+        if (gap > 0.5 && Math.abs(gap - g.distance) < MATCH_EPS) {
+          extras.push({
+            y: sharedY,
+            x1: a.right, x2: b.left,
+            labelX: (a.right + b.left) / 2,
+            labelY: sharedY,
+            distance: gap,
+            refId: `chain-${a.id}|${b.id}`,
+            equal: true,
+          });
+          g.equal = true;
+        }
+      }
+    } else {
+      const sharedX = g.x;
+      const aligned = refs.filter(r =>
+        Math.abs(r.left - sharedX) < ALIGN_EPS ||
+        Math.abs(r.cx   - sharedX) < ALIGN_EPS ||
+        Math.abs(r.right - sharedX) < ALIGN_EPS,
+      );
+      aligned.sort((a, b) => a.top - b.top);
+      for (let i = 0; i < aligned.length - 1; i++) {
+        const a = aligned[i], b = aligned[i + 1];
+        const gap = b.top - a.bottom;
+        if (gap > 0.5 && Math.abs(gap - g.distance) < MATCH_EPS) {
+          extras.push({
+            x: sharedX,
+            y1: a.bottom, y2: b.top,
+            labelX: sharedX,
+            labelY: (a.bottom + b.top) / 2,
+            distance: gap,
+            refId: `chain-${a.id}|${b.id}`,
+            equal: true,
+          });
+          g.equal = true;
+        }
       }
     }
   }
-  return { snapDx, snapDy, vGuides, hGuides };
+  return extras;
+}
+
+function buildHGuide(y, snapped, ref) {
+  const x1 = Math.min(snapped.left, ref.left);
+  const x2 = Math.max(snapped.right, ref.right);
+  let distance = null, labelX = null, direction = null;
+  if (snapped.right < ref.left) {
+    distance = ref.left - snapped.right;
+    labelX = (snapped.right + ref.left) / 2;
+    direction = 'after';  // ref is to the right of snapped
+  } else if (ref.right < snapped.left) {
+    distance = snapped.left - ref.right;
+    labelX = (ref.right + snapped.left) / 2;
+    direction = 'before'; // ref is to the left of snapped
+  }
+  return { y, x1, x2, labelX, labelY: y, distance, direction, refId: ref.id };
 }
 
 // Resize-time alignment snap. Only the edges implied by the handle move,
@@ -1337,16 +1450,67 @@ function computeResizeSnap(el, handle) {
   for (const ref of refs) {
     if (movingX) {
       for (const rk of xKeys) if (Math.abs(snapped[movingX] - ref[rk]) < eps) {
-        vGuides.push({ x: ref[rk], y1: Math.min(snapped.top, ref.top), y2: Math.max(snapped.bottom, ref.bottom) });
+        vGuides.push(buildVGuide(ref[rk], snapped, ref));
       }
     }
     if (movingY) {
       for (const rk of yKeys) if (Math.abs(snapped[movingY] - ref[rk]) < eps) {
-        hGuides.push({ y: ref[rk], x1: Math.min(snapped.left, ref.left), x2: Math.max(snapped.right, ref.right) });
+        hGuides.push(buildHGuide(ref[rk], snapped, ref));
       }
     }
   }
-  return { snapDx, snapDy, vGuides, hGuides };
+  const filteredV = keepNearestPerSide(vGuides, 'x');
+  const filteredH = keepNearestPerSide(hGuides, 'y');
+  const chainedV = collectChainedEqualGuides(filteredV, refs, 'v');
+  const chainedH = collectChainedEqualGuides(filteredH, refs, 'h');
+  return {
+    snapDx, snapDy,
+    vGuides: [...filteredV, ...chainedV],
+    hGuides: [...filteredH, ...chainedH],
+  };
+}
+
+// When the dragged shape aligns with a ref along several edges (e.g. same
+// width -> left, center, and right all match), we end up with parallel
+// labels all showing the same gap. Keep just the middle one so the user
+// sees one clear distance per ref pair per perpendicular gap.
+function collapseSiblingLabels(guides, perpKey) {
+  const groups = new Map();
+  for (const g of guides) {
+    if (g.distance == null || g.refId == null) continue;
+    const key = `${g.refId}|${Math.round(g[perpKey] * 100)}|${Math.round(g.distance * 100)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(g);
+  }
+  const hideLabel = new Set();
+  const otherKey = perpKey === 'labelY' ? 'labelX' : 'labelY';
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => a[otherKey] - b[otherKey]);
+    const keep = group[Math.floor(group.length / 2)];
+    for (const g of group) if (g !== keep) hideLabel.add(g);
+  }
+  return hideLabel;
+}
+
+// Tag guides whose gap distance is equal across refs on the same axis so
+// renderGuides can draw them in a distinct "equal-spacing" style.
+function markEqualSpacing(guides) {
+  const byDist = new Map();
+  for (const g of guides) {
+    if (g.distance == null) continue;
+    // Match the 1-decimal precision that the pills actually display — that
+    // way every pair tagged "equal" literally shows the same number.
+    const key = (Math.round(g.distance * 10) / 10).toString();
+    if (!byDist.has(key)) byDist.set(key, []);
+    byDist.get(key).push(g);
+  }
+  for (const group of byDist.values()) {
+    if (group.length < 2) continue;
+    const refIds = new Set(group.map(g => g.refId));
+    if (refIds.size < 2) continue; // only count across distinct ref shapes
+    for (const g of group) g.equal = true;
+  }
 }
 
 function renderGuides(vGuides, hGuides) {
@@ -1367,6 +1531,64 @@ function renderGuides(vGuides, hGuides) {
   };
   for (const g of vGuides) make(g.x, g.y1, g.x, g.y2);
   for (const g of hGuides) make(g.x1, g.y, g.x2, g.y);
+
+  // Collapse "same ref + same gap" sibling labels down to the middle one;
+  // flag gap distances that repeat across refs on the same axis.
+  const hideV = collapseSiblingLabels(vGuides, 'labelY');
+  const hideH = collapseSiblingLabels(hGuides, 'labelX');
+  markEqualSpacing(vGuides);
+  markEqualSpacing(hGuides);
+
+  // Distance labels — sized in user-units but scaled from target screen px,
+  // so the badges stay readable (and compact) at any zoom level.
+  const screenW = canvasInner.clientWidth || 1;
+  const pxToUser = vbW / screenW;
+  const fontSize = 16 * pxToUser;
+  const padX = 9 * pxToUser;
+  const padY = 5 * pxToUser;
+  const charW = fontSize * 0.62;
+  const seen = new Set();
+  const makeLabel = (x, y, text, equal) => {
+    const key = `${Math.round(x * 100)}:${Math.round(y * 100)}:${text}:${equal ? 1 : 0}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const label = equal ? `= ${text}` : text;
+    const tw = label.length * charW;
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('x', x - tw / 2 - padX);
+    rect.setAttribute('y', y - fontSize / 2 - padY);
+    rect.setAttribute('width',  tw + padX * 2);
+    rect.setAttribute('height', fontSize + padY * 2);
+    rect.setAttribute('rx', 3 * pxToUser);
+    rect.setAttribute('fill', equal ? '#ff7898' : '#ff2d92');
+    guidesGroup.appendChild(rect);
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.setAttribute('x', x);
+    t.setAttribute('y', y);
+    t.setAttribute('fill', equal ? '#1a0010' : '#fff');
+    t.setAttribute('font-size', fontSize);
+    t.setAttribute('font-family', 'JetBrains Mono, SF Mono, Consolas, monospace');
+    t.setAttribute('font-weight', '700');
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'central');
+    t.textContent = label;
+    guidesGroup.appendChild(t);
+  };
+  const fmt = (d) => {
+    const abs = Math.abs(d);
+    if (abs < 0.5) return '0';
+    return (Math.round(abs * 10) / 10).toString().replace(/\.0$/, '');
+  };
+  for (const g of vGuides) {
+    if (g.distance == null || g.labelY == null) continue;
+    if (hideV.has(g)) continue;
+    makeLabel(g.labelX, g.labelY, fmt(g.distance), !!g.equal);
+  }
+  for (const g of hGuides) {
+    if (g.distance == null || g.labelX == null) continue;
+    if (hideH.has(g)) continue;
+    makeLabel(g.labelX, g.labelY, fmt(g.distance), !!g.equal);
+  }
 }
 
 function clearGuides() {
@@ -2064,14 +2286,14 @@ function populateProps(el) {
 
     {
       const { row, ctrl } = field('Position');
-      ctrl.appendChild(miniInput('X', cur.x, { onInput: onRect('x'), field: 'x' }).wrap);
-      ctrl.appendChild(miniInput('Y', cur.y, { onInput: onRect('y'), field: 'y' }).wrap);
+      ctrl.appendChild(miniInput('X', cur.x, { onInput: onRect('x'), field: 'x', step: 'any' }).wrap);
+      ctrl.appendChild(miniInput('Y', cur.y, { onInput: onRect('y'), field: 'y', step: 'any' }).wrap);
       propsPanel.appendChild(row);
     }
     {
       const { row, ctrl } = field('Size');
-      ctrl.appendChild(miniInput('W', cur.w, { min: 1, onInput: onRect('w'), field: 'w' }).wrap);
-      ctrl.appendChild(miniInput('H', cur.h, { min: 1, onInput: onRect('h'), field: 'h' }).wrap);
+      ctrl.appendChild(miniInput('W', cur.w, { min: 1, onInput: onRect('w'), field: 'w', step: 'any' }).wrap);
+      ctrl.appendChild(miniInput('H', cur.h, { min: 1, onInput: onRect('h'), field: 'h', step: 'any' }).wrap);
       propsPanel.appendChild(row);
     }
     {
@@ -2096,14 +2318,15 @@ function populateProps(el) {
         const c = getRectLike(el);
         if (individual) {
           ctrl.dataset.hint = 'Per-corner radius';
-          ctrl.appendChild(miniInput('TL', c.tl, { min: 0, onInput: onRect('tl'), field: 'tl' }).wrap);
-          ctrl.appendChild(miniInput('TR', c.tr, { min: 0, onInput: onRect('tr'), field: 'tr' }).wrap);
-          ctrl.appendChild(miniInput('BL', c.bl, { min: 0, onInput: onRect('bl'), field: 'bl' }).wrap);
-          ctrl.appendChild(miniInput('BR', c.br, { min: 0, onInput: onRect('br'), field: 'br' }).wrap);
+          ctrl.appendChild(miniInput('TL', c.tl, { min: 0, onInput: onRect('tl'), field: 'tl', step: 'any' }).wrap);
+          ctrl.appendChild(miniInput('TR', c.tr, { min: 0, onInput: onRect('tr'), field: 'tr', step: 'any' }).wrap);
+          ctrl.appendChild(miniInput('BL', c.bl, { min: 0, onInput: onRect('bl'), field: 'bl', step: 'any' }).wrap);
+          ctrl.appendChild(miniInput('BR', c.br, { min: 0, onInput: onRect('br'), field: 'br', step: 'any' }).wrap);
         } else {
           ctrl.dataset.hint = 'Uniform corner radius';
           ctrl.appendChild(miniInput('', c.tl, {
             min: 0,
+            step: 'any',
             onInput: applyUniform,
             field: 'corners-uniform',
             labelHtml: '<svg class="corner-ico" viewBox="0 0 11 11" aria-hidden="true"><path d="M1 10 V4 Q1 1 4 1 H10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
@@ -2537,7 +2760,10 @@ window.addEventListener('mousemove', (e) => {
       left: selBox.left + deltaHypoX, right: selBox.right + deltaHypoX, cx: selBox.cx + deltaHypoX,
       top: selBox.top + deltaHypoY, bottom: selBox.bottom + deltaHypoY, cy: selBox.cy + deltaHypoY,
     };
-    const { snapDx, snapDy, vGuides, hGuides } = computeSnap(hypo);
+    // Hold Alt to bypass smart-snap for precise placement (e.g. 50.1px gaps).
+    const { snapDx, snapDy, vGuides, hGuides } = e.altKey
+      ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+      : computeSnap(hypo);
     const finalX = desiredX + snapDx;
     const finalY = desiredY + snapDy;
     const applyX = finalX - drag.appliedX;
@@ -2563,7 +2789,9 @@ window.addEventListener('mousemove', (e) => {
   } else if (drag.mode === 'resize' && selection.length === 1) {
     const dx = sp.x - drag.x, dy = sp.y - drag.y;
     resizeElement(selection[0], dx, dy, drag.handle, drag.startBBox);
-    const snap = computeResizeSnap(selection[0], drag.handle);
+    const snap = e.altKey
+      ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+      : computeResizeSnap(selection[0], drag.handle);
     if (snap.snapDx || snap.snapDy) {
       resizeElement(selection[0], snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
     }
