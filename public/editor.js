@@ -1865,10 +1865,11 @@ function field(labelText) {
   return { row, ctrl };
 }
 
-function miniInput(label, value, { onInput, hint, min, step = 1, labelHtml } = {}) {
+function miniInput(label, value, { onInput, hint, min, step = 1, labelHtml, field } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'mini';
   if (hint) wrap.dataset.hint = hint;
+  if (field) wrap.dataset.field = field;
   const lb = document.createElement('span');
   if (labelHtml) lb.innerHTML = labelHtml;
   else lb.textContent = label;
@@ -1876,10 +1877,22 @@ function miniInput(label, value, { onInput, hint, min, step = 1, labelHtml } = {
   const inp = document.createElement('input');
   inp.type = 'number'; inp.step = step;
   if (min !== undefined) inp.min = min;
+  if (field) inp.dataset.field = field;
   inp.value = value;
   if (onInput) inp.addEventListener('input', onInput);
   wrap.appendChild(inp);
   return { wrap, inp };
+}
+
+// After populateProps() replaces the input the user was typing in (because a
+// rect-path ↔ rect swap forced a rebuild), refocus the equivalent field and
+// restore the caret so keystrokes keep landing on the input — otherwise the
+// next Backspace hits <body> and the global delete-shape handler fires.
+function restorePropsFocus(fieldKey, caret, caretEnd) {
+  const fresh = propsPanel.querySelector(`input[data-field="${fieldKey}"]`);
+  if (!fresh) return;
+  fresh.focus();
+  try { fresh.setSelectionRange(caret ?? 0, caretEnd ?? fresh.value.length); } catch {}
 }
 
 function populateProps(el) {
@@ -1961,24 +1974,31 @@ function populateProps(el) {
   if (isRectLike(el)) {
     const cur = getRectLike(el);
     const onRect = (key) => (ev) => {
-      const v = parseFloat(ev.target.value) || 0;
+      const input = ev.target;
+      const caret = input.selectionStart, caretEnd = input.selectionEnd;
+      const v = parseFloat(input.value) || 0;
       const patch = (ev.shiftKey && (key === 'tl' || key === 'tr' || key === 'br' || key === 'bl'))
         ? { tl: v, tr: v, br: v, bl: v } : { [key]: v };
       const newEl = setRectLike(el, patch);
-      if (newEl !== el) { swapSelected(el, newEl); populateProps(newEl); return; }
+      if (newEl !== el) {
+        swapSelected(el, newEl);
+        populateProps(newEl);
+        restorePropsFocus(key, caret, caretEnd);
+        return;
+      }
       updateHandles();
     };
 
     {
       const { row, ctrl } = field('Position');
-      ctrl.appendChild(miniInput('X', cur.x, { onInput: onRect('x') }).wrap);
-      ctrl.appendChild(miniInput('Y', cur.y, { onInput: onRect('y') }).wrap);
+      ctrl.appendChild(miniInput('X', cur.x, { onInput: onRect('x'), field: 'x' }).wrap);
+      ctrl.appendChild(miniInput('Y', cur.y, { onInput: onRect('y'), field: 'y' }).wrap);
       propsPanel.appendChild(row);
     }
     {
       const { row, ctrl } = field('Size');
-      ctrl.appendChild(miniInput('W', cur.w, { min: 1, onInput: onRect('w') }).wrap);
-      ctrl.appendChild(miniInput('H', cur.h, { min: 1, onInput: onRect('h') }).wrap);
+      ctrl.appendChild(miniInput('W', cur.w, { min: 1, onInput: onRect('w'), field: 'w' }).wrap);
+      ctrl.appendChild(miniInput('H', cur.h, { min: 1, onInput: onRect('h'), field: 'h' }).wrap);
       propsPanel.appendChild(row);
     }
     {
@@ -1986,9 +2006,16 @@ function populateProps(el) {
       ctrl.style.flexWrap = 'wrap';
       let individual = !(cur.tl === cur.tr && cur.tr === cur.br && cur.br === cur.bl);
       const applyUniform = (ev) => {
-        const v = parseFloat(ev.target.value) || 0;
+        const input = ev.target;
+        const caret = input.selectionStart, caretEnd = input.selectionEnd;
+        const v = parseFloat(input.value) || 0;
         const newEl = setRectLike(el, { tl: v, tr: v, br: v, bl: v });
-        if (newEl !== el) { swapSelected(el, newEl); populateProps(newEl); return; }
+        if (newEl !== el) {
+          swapSelected(el, newEl);
+          populateProps(newEl);
+          restorePropsFocus('corners-uniform', caret, caretEnd);
+          return;
+        }
         updateHandles();
       };
       const renderCorners = () => {
@@ -1996,15 +2023,16 @@ function populateProps(el) {
         const c = getRectLike(el);
         if (individual) {
           ctrl.dataset.hint = 'Per-corner radius';
-          ctrl.appendChild(miniInput('TL', c.tl, { min: 0, onInput: onRect('tl') }).wrap);
-          ctrl.appendChild(miniInput('TR', c.tr, { min: 0, onInput: onRect('tr') }).wrap);
-          ctrl.appendChild(miniInput('BL', c.bl, { min: 0, onInput: onRect('bl') }).wrap);
-          ctrl.appendChild(miniInput('BR', c.br, { min: 0, onInput: onRect('br') }).wrap);
+          ctrl.appendChild(miniInput('TL', c.tl, { min: 0, onInput: onRect('tl'), field: 'tl' }).wrap);
+          ctrl.appendChild(miniInput('TR', c.tr, { min: 0, onInput: onRect('tr'), field: 'tr' }).wrap);
+          ctrl.appendChild(miniInput('BL', c.bl, { min: 0, onInput: onRect('bl'), field: 'bl' }).wrap);
+          ctrl.appendChild(miniInput('BR', c.br, { min: 0, onInput: onRect('br'), field: 'br' }).wrap);
         } else {
           ctrl.dataset.hint = 'Uniform corner radius';
           ctrl.appendChild(miniInput('', c.tl, {
             min: 0,
             onInput: applyUniform,
+            field: 'corners-uniform',
             labelHtml: '<svg class="corner-ico" viewBox="0 0 11 11" aria-hidden="true"><path d="M1 10 V4 Q1 1 4 1 H10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
           }).wrap);
         }
@@ -2509,8 +2537,19 @@ window.addEventListener('mouseup', (e) => {
 // Keyboard shortcuts
 // =============================================================
 
+// Track the last time the user typed into any form input. If a destructive
+// key (Delete/Backspace) fires within a short window of that, skip canvas
+// deletion — the user was almost certainly continuing to edit a field whose
+// input got replaced mid-keystroke (e.g., Corners swapping rect↔path).
+let lastFormInputAt = 0;
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) lastFormInputAt = Date.now();
+}, true);
+
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && Date.now() - lastFormInputAt < 250) return;
 
   if (e.key === 'Escape') {
     if (pendingShape) { e.preventDefault(); exitDrawMode(); return; }
