@@ -1,4 +1,4 @@
-# SVG Editor
+# Freegma
 
 Standalone SVG editor. Build, edit, and save vector drawings with a visual interface. Fully client-side — the server is a thin static host. Each user works locally in their own browser, and each drawing has its own canvas size (like Figma frames).
 
@@ -45,3 +45,7 @@ Drop `.svg` files into the `icons/` folder. They appear as starter drawings on e
 
 - The expanded editor view is 10% padding around each drawing. Scroll to zoom, right-drag to pan. Starting a new drawing or switching drawings refits the view.
 - The checkerboard background plus the dashed pink rectangle show the drawing bounds.
+
+## License
+
+MIT — see [LICENSE](./LICENSE).

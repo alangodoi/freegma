@@ -1,5 +1,5 @@
 // =============================================================
-// SVG Editor — standalone edition (fully client-side, per-drawing size)
+// Freegma — standalone SVG editor (fully client-side, per-drawing size)
 // =============================================================
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

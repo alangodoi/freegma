@@ -49,4 +49,4 @@ Bun.serve({
   },
 });
 
-console.log(`SVG Editor running at http://localhost:${PORT}`);
+console.log(`Freegma running at http://localhost:${PORT}`);
