@@ -33,14 +33,6 @@ Open <http://localhost:3001>
 - **Rename / Remove** — manage session drawings
 - **Copy SVG** — clipboard with cleaned markup (`viewBox="0 0 W H"`, proper `width`/`height`)
 
-## Persistence model
-
-There is no server-side persistence. Drawings live in the current browser session. Use **DOWNLOAD** to save to disk and **IMPORT** to load back. Reloading the page resets to the starter templates from `./icons`.
-
-## Starter templates
-
-Drop `.svg` files into the `icons/` folder. They appear as starter drawings on each page load. The editor reads their `viewBox` (or `width`/`height`) to determine the canvas size per file.
-
 ## Notes
 
 - The expanded editor view is 10% padding around each drawing. Scroll to zoom, right-drag to pan. Starting a new drawing or switching drawings refits the view.
@@ -48,4 +40,24 @@ Drop `.svg` files into the `icons/` folder. They appear as starter drawings on e
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT License
+
+Copyright (c) 2026 Alan Godoi da Silveira
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

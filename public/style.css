@@ -42,11 +42,32 @@ body {
   border-bottom: 1px solid var(--bd);
   flex-shrink: 0;
 }
+#topbar .brand { display: flex; align-items: center; gap: var(--s3); }
 #topbar .title {
   font-weight: 600; font-size: 12px; letter-spacing: 2px;
   color: var(--accent);
   font-family: var(--mono);
 }
+#topbar .gh-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--h);
+  padding: 0 10px;
+  color: var(--tx-dim);
+  background: transparent;
+  border: 1px solid var(--bd);
+  border-radius: var(--r);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-decoration: none;
+  transition: color .12s, border-color .12s, background .12s;
+}
+#topbar .gh-link:hover {
+  color: var(--tx);
+  border-color: var(--bd-hi);
+  background: var(--bg-input-hi);
+}
+#topbar .gh-link svg { width: 14px; height: 14px; display: block; }
 #topbar .actions { display: flex; gap: var(--s1); }
 
 /* ---- Buttons (base) ---- */
