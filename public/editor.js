@@ -2748,6 +2748,20 @@ window.addEventListener('mousemove', (e) => {
     return;
   }
 
+  if (drag.mode === 'marquee') {
+    const x1 = Math.min(drag.startX, sp.x);
+    const y1 = Math.min(drag.startY, sp.y);
+    const w  = Math.abs(sp.x - drag.startX);
+    const h  = Math.abs(sp.y - drag.startY);
+    marqueeRect.setAttribute('x', x1);
+    marqueeRect.setAttribute('y', y1);
+    marqueeRect.setAttribute('width',  w);
+    marqueeRect.setAttribute('height', h);
+    marqueeRect.style.display = '';
+    drag.x = sp.x; drag.y = sp.y;
+    return;
+  }
+
   if (selection.length === 0) return;
 
   if (drag.mode === 'move') {
@@ -2774,18 +2788,6 @@ window.addEventListener('mousemove', (e) => {
     drag.appliedX = finalX;
     drag.appliedY = finalY;
     renderGuides(vGuides, hGuides);
-  } else if (drag.mode === 'marquee') {
-    const x1 = Math.min(drag.startX, sp.x);
-    const y1 = Math.min(drag.startY, sp.y);
-    const w  = Math.abs(sp.x - drag.startX);
-    const h  = Math.abs(sp.y - drag.startY);
-    marqueeRect.setAttribute('x', x1);
-    marqueeRect.setAttribute('y', y1);
-    marqueeRect.setAttribute('width',  w);
-    marqueeRect.setAttribute('height', h);
-    marqueeRect.style.display = '';
-    drag.x = sp.x; drag.y = sp.y;
-    return; // skip updateHandles / path-anchor rendering below
   } else if (drag.mode === 'resize' && selection.length === 1) {
     const dx = sp.x - drag.x, dy = sp.y - drag.y;
     resizeElement(selection[0], dx, dy, drag.handle, drag.startBBox);
