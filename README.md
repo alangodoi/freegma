@@ -1,6 +1,6 @@
 # Freegma
 
-Standalone SVG editor. Build, edit, and save vector drawings with a visual interface. Fully client-side — the server is a thin static host. Each user works locally in their own browser, and each drawing has its own canvas size.
+Open-source browser graphics tool. Design with vectors, drop photos on the canvas, and export to SVG, PNG, WebP, or JPEG — no account, no uploads. Fully client-side; the server is a thin static host and each user works locally in their own browser.
 
 ## Quick Start
 
