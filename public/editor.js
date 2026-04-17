@@ -850,14 +850,24 @@ async function exportRaster(mime) {
   }
 }
 
-function removeCurrent() {
-  if (!currentId) return;
-  if (!confirm(`Remove "${currentId}" from this session?`)) return;
-  delete drawings[currentId];
-  currentId = null;
-  const keys = Object.keys(drawings).sort();
-  if (keys.length > 0) loadDrawing(keys[0]);
-  else newDrawing();
+async function removeDrawing(name) {
+  if (!drawings[name]) return;
+  const ok = await showConfirm({
+    title: 'Remove drawing',
+    message: `Remove "${name}" from this session? This can't be undone.`,
+    confirmText: 'Remove',
+  });
+  if (!ok) return;
+  const wasCurrent = (currentId === name);
+  delete drawings[name];
+  if (wasCurrent) {
+    currentId = null;
+    const keys = Object.keys(drawings).sort();
+    if (keys.length > 0) loadDrawing(keys[0]);
+    else newDrawing();
+  } else {
+    refreshIconList();
+  }
 }
 
 function openRenameDialog(name) {
@@ -1018,7 +1028,15 @@ function refreshIconList() {
     meta.appendChild(n); meta.appendChild(dim);
     row.appendChild(preview);
     row.appendChild(meta);
-    row.addEventListener('click', () => loadDrawing(name));
+    row.tabIndex = 0;
+    row.dataset.drawing = name;
+    row.addEventListener('click', () => {
+      loadDrawing(name);
+      // loadDrawing may rebuild the list, leaving `row` detached — refocus the
+      // fresh row so Delete has a live target.
+      const live = iconList.querySelector(`.icon-item[data-drawing="${CSS.escape(name)}"]`);
+      (live || row).focus();
+    });
     row.addEventListener('dblclick', (e) => { e.preventDefault(); openRenameDialog(name); });
     iconList.appendChild(row);
   }
@@ -2517,6 +2535,16 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
+    // If a drawing row in the sidebar has focus, delete that drawing instead
+    // of any canvas selection. (Rows get focus when clicked.)
+    const focusedRow = e.target && e.target.classList && e.target.classList.contains('icon-item')
+      ? e.target
+      : null;
+    if (focusedRow && focusedRow.dataset.drawing) {
+      e.preventDefault();
+      removeDrawing(focusedRow.dataset.drawing);
+      return;
+    }
     if (selectedAnchor && selection.includes(selectedAnchor.el)) {
       e.preventDefault();
       pushUndo();
@@ -2777,7 +2805,6 @@ window.addEventListener('click', () => exportMenu.classList.add('hidden'));
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !exportMenu.classList.contains('hidden')) exportMenu.classList.add('hidden');
 });
-document.getElementById('btnDelete').addEventListener('click', removeCurrent);
 
 // Rename dialog refs + wiring. Rows in the drawings list open this via dblclick.
 const renameDialog        = document.getElementById('renameDialog');
@@ -2794,6 +2821,37 @@ renameInput.addEventListener('keydown', (e) => {
 renameDialog.addEventListener('click', (e) => {
   if (e.target === renameDialog) closeRenameDialog();
 });
+
+// Confirm dialog (Promise-based replacement for window.confirm)
+const confirmDialog  = document.getElementById('confirmDialog');
+const confirmTitle   = document.getElementById('confirmTitle');
+const confirmMessage = document.getElementById('confirmMessage');
+const confirmOk      = document.getElementById('confirmOk');
+const confirmCancel  = document.getElementById('confirmCancel');
+let confirmResolve = null;
+function showConfirm({ title = 'Confirm', message = '', confirmText = 'Confirm' } = {}) {
+  return new Promise((resolve) => {
+    confirmTitle.textContent   = title;
+    confirmMessage.textContent = message;
+    confirmOk.textContent      = confirmText;
+    confirmDialog.classList.remove('hidden');
+    confirmResolve = resolve;
+    setTimeout(() => confirmOk.focus(), 0);
+  });
+}
+function closeConfirm(value) {
+  confirmDialog.classList.add('hidden');
+  const r = confirmResolve; confirmResolve = null;
+  if (r) r(value);
+}
+confirmOk.addEventListener('click',     () => closeConfirm(true));
+confirmCancel.addEventListener('click', () => closeConfirm(false));
+confirmDialog.addEventListener('click', (e) => { if (e.target === confirmDialog) closeConfirm(false); });
+document.addEventListener('keydown', (e) => {
+  if (confirmDialog.classList.contains('hidden')) return;
+  if (e.key === 'Enter')  { e.preventDefault(); closeConfirm(true); }
+  if (e.key === 'Escape') { e.preventDefault(); closeConfirm(false); }
+}, true);
 document.getElementById('btnScale').addEventListener('click', () => {
   const raw = prompt(`Scale drawing — new size (WxH or single factor like "2x"):`, `${currentW}x${currentH}`);
   if (raw === null) return;

@@ -58,7 +58,6 @@
             <button class="menu-item" data-format="jpeg">JPEG <span class="menu-sub">smallest, white bg</span></button>
           </div>
         </div>
-        <button id="btnDelete" class="danger" data-hint="Remove the current drawing from this session (does not delete any file)">Remove</button>
       </div>
     </header>
 
@@ -164,6 +163,18 @@
       <div class="row end">
         <button id="importCancel">Cancel</button>
         <button id="importOk" class="primary">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div id="confirmDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <div class="dialog-title" id="confirmTitle">Confirm</div>
+      <div class="muted" id="confirmMessage"></div>
+      <div class="row end">
+        <button id="confirmCancel">Cancel</button>
+        <button id="confirmOk" class="primary">Confirm</button>
       </div>
     </div>
   </div>
