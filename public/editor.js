@@ -860,13 +860,42 @@ function removeCurrent() {
   else newDrawing();
 }
 
-function renameCurrent() {
-  if (!currentId) return;
-  const n = sanitizeName(prompt('New name:', currentId) || '');
-  if (!n || n === currentId) return;
-  drawings[n] = drawings[currentId];
-  delete drawings[currentId];
-  currentId = n;
+function openRenameDialog(name) {
+  if (!name || !drawings[name]) return;
+  renameTargetName = name;
+  renameCurrentNameEl.textContent = name;
+  renameInput.value = name;
+  renameError.style.display = 'none';
+  renameError.textContent = '';
+  renameDialog.classList.remove('hidden');
+  // Defer focus until after the dialog is visible so selection sticks.
+  setTimeout(() => { renameInput.focus(); renameInput.select(); }, 0);
+}
+
+function closeRenameDialog() {
+  renameDialog.classList.add('hidden');
+  renameTargetName = null;
+}
+
+function commitRename() {
+  if (!renameTargetName || !drawings[renameTargetName]) { closeRenameDialog(); return; }
+  const raw = renameInput.value;
+  const n = sanitizeName(raw || '');
+  if (!n) {
+    renameError.textContent = 'Please enter a name.';
+    renameError.style.display = '';
+    return;
+  }
+  if (n === renameTargetName) { closeRenameDialog(); return; }
+  if (drawings[n]) {
+    renameError.textContent = `"${n}" is already taken.`;
+    renameError.style.display = '';
+    return;
+  }
+  drawings[n] = drawings[renameTargetName];
+  delete drawings[renameTargetName];
+  if (currentId === renameTargetName) currentId = n;
+  closeRenameDialog();
   refreshIconList();
 }
 
@@ -990,6 +1019,7 @@ function refreshIconList() {
     row.appendChild(preview);
     row.appendChild(meta);
     row.addEventListener('click', () => loadDrawing(name));
+    row.addEventListener('dblclick', (e) => { e.preventDefault(); openRenameDialog(name); });
     iconList.appendChild(row);
   }
 }
@@ -2659,8 +2689,23 @@ window.addEventListener('click', () => exportMenu.classList.add('hidden'));
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !exportMenu.classList.contains('hidden')) exportMenu.classList.add('hidden');
 });
-document.getElementById('btnRename').addEventListener('click', renameCurrent);
 document.getElementById('btnDelete').addEventListener('click', removeCurrent);
+
+// Rename dialog refs + wiring. Rows in the drawings list open this via dblclick.
+const renameDialog        = document.getElementById('renameDialog');
+const renameInput         = document.getElementById('renameInput');
+const renameCurrentNameEl = document.getElementById('renameCurrentName');
+const renameError         = document.getElementById('renameError');
+let renameTargetName = null;
+document.getElementById('renameCancel').addEventListener('click', closeRenameDialog);
+document.getElementById('renameOk').addEventListener('click', commitRename);
+renameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter')  { e.preventDefault(); commitRename(); }
+  if (e.key === 'Escape') { e.preventDefault(); closeRenameDialog(); }
+});
+renameDialog.addEventListener('click', (e) => {
+  if (e.target === renameDialog) closeRenameDialog();
+});
 document.getElementById('btnCopy').addEventListener('click', () => {
   navigator.clipboard.writeText(cleanClone().outerHTML).then(() => {
     flashButton('btnCopy', 'COPIED!');

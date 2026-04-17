@@ -49,7 +49,6 @@
       <div class="actions">
         <button id="btnNew" data-hint="Start a fresh drawing (prompts for canvas size)">+ New</button>
         <button id="btnImport" data-hint="Load SVG files from disk or paste markup">Import</button>
-        <button id="btnRename" data-hint="Rename the current drawing in this session">Rename</button>
         <div class="menu-wrap">
           <button id="btnExport" class="primary" data-hint="Export the current drawing to a file (SVG, PNG, or JPEG)">Export ▾</button>
           <div id="exportMenu" class="menu hidden">
@@ -166,6 +165,20 @@
       <div class="row end">
         <button id="importCancel">Cancel</button>
         <button id="importOk" class="primary">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename dialog -->
+  <div id="renameDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <div class="dialog-title">Rename drawing</div>
+      <div class="muted">Current name: <span id="renameCurrentName"></span></div>
+      <input type="text" id="renameInput" placeholder="New name (lowercase, letters/digits/_/-)" autocomplete="off" spellcheck="false">
+      <div class="muted" id="renameError" style="color: var(--danger); display: none;"></div>
+      <div class="row end">
+        <button id="renameCancel">Cancel</button>
+        <button id="renameOk" class="primary">Rename</button>
       </div>
     </div>
   </div>
