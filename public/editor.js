@@ -1103,11 +1103,112 @@ function selectElement(el, addToSelection = false) {
   refreshElementList();
   if (selection.length === 1) populateProps(selection[0]);
   else if (selection.length > 1) {
-    propsPanel.innerHTML = `<div class="empty">${selection.length} elements selected</div>`;
+    renderMultiSelectProps(selection.length);
   } else {
     propsPanel.innerHTML = '<div class="empty">Select an element</div>';
   }
   renderPathAnchors(selection.length === 1 ? selection[0] : null);
+}
+
+function alignSelection(kind) {
+  if (selection.length < 2) return;
+  const boxes = selection.map(el => ({ el, bb: bboxInCanvas(el) }));
+  const minX = Math.min(...boxes.map(b => b.bb.x));
+  const maxX = Math.max(...boxes.map(b => b.bb.x + b.bb.width));
+  const minY = Math.min(...boxes.map(b => b.bb.y));
+  const maxY = Math.max(...boxes.map(b => b.bb.y + b.bb.height));
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  pushUndo();
+  for (const { el, bb } of boxes) {
+    let dx = 0, dy = 0;
+    if (kind === 'left')    dx = minX - bb.x;
+    if (kind === 'right')   dx = maxX - (bb.x + bb.width);
+    if (kind === 'hcenter') dx = cx - (bb.x + bb.width / 2);
+    if (kind === 'top')     dy = minY - bb.y;
+    if (kind === 'bottom')  dy = maxY - (bb.y + bb.height);
+    if (kind === 'vmiddle') dy = cy - (bb.y + bb.height / 2);
+    if (dx || dy) moveElement(el, dx, dy);
+  }
+  updateHandles();
+  refreshElementList();
+}
+
+function distributeSelection(axis) {
+  if (selection.length < 3) return;
+  const boxes = selection.map(el => ({ el, bb: bboxInCanvas(el) }));
+  if (axis === 'h') boxes.sort((a, b) => a.bb.x - b.bb.x);
+  else              boxes.sort((a, b) => a.bb.y - b.bb.y);
+  const first = boxes[0], last = boxes[boxes.length - 1];
+  let totalSize, span;
+  if (axis === 'h') {
+    totalSize = boxes.reduce((s, b) => s + b.bb.width, 0);
+    span = (last.bb.x + last.bb.width) - first.bb.x;
+  } else {
+    totalSize = boxes.reduce((s, b) => s + b.bb.height, 0);
+    span = (last.bb.y + last.bb.height) - first.bb.y;
+  }
+  if (span <= totalSize) return; // overlapping — nothing to distribute
+  const gap = (span - totalSize) / (boxes.length - 1);
+  pushUndo();
+  let cursor = axis === 'h'
+    ? first.bb.x + first.bb.width + gap
+    : first.bb.y + first.bb.height + gap;
+  for (let i = 1; i < boxes.length - 1; i++) {
+    const b = boxes[i];
+    if (axis === 'h') {
+      const dx = cursor - b.bb.x;
+      if (dx) moveElement(b.el, dx, 0);
+      cursor += b.bb.width + gap;
+    } else {
+      const dy = cursor - b.bb.y;
+      if (dy) moveElement(b.el, 0, dy);
+      cursor += b.bb.height + gap;
+    }
+  }
+  updateHandles();
+  refreshElementList();
+}
+
+function renderMultiSelectProps(count) {
+  propsPanel.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'empty';
+  header.textContent = `${count} elements selected`;
+  propsPanel.appendChild(header);
+  const grid = document.createElement('div');
+  grid.className = 'align-grid';
+  const btn = (hint, icon, onClick, disabled = false) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'align-btn';
+    b.dataset.hint = hint;
+    b.innerHTML = icon;
+    if (disabled) { b.disabled = true; b.classList.add('is-disabled'); }
+    else b.addEventListener('click', onClick);
+    grid.appendChild(b);
+    return b;
+  };
+  // 16x16 icons — currentColor lines + thin rects representing shapes
+  const ICONS = {
+    left:    '<svg viewBox="0 0 16 16"><line x1="1.5" y1="2" x2="1.5" y2="14" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="10" height="2.5" fill="currentColor"/><rect x="3" y="9" width="7" height="2.5" fill="currentColor"/></svg>',
+    hcenter: '<svg viewBox="0 0 16 16"><line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="10" height="2.5" fill="currentColor"/><rect x="4.5" y="9" width="7" height="2.5" fill="currentColor"/></svg>',
+    right:   '<svg viewBox="0 0 16 16"><line x1="14.5" y1="2" x2="14.5" y2="14" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="10" height="2.5" fill="currentColor"/><rect x="6" y="9" width="7" height="2.5" fill="currentColor"/></svg>',
+    top:     '<svg viewBox="0 0 16 16"><line x1="2" y1="1.5" x2="14" y2="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="3.5" y="3" width="2.5" height="10" fill="currentColor"/><rect x="9" y="3" width="2.5" height="7" fill="currentColor"/></svg>',
+    vmiddle: '<svg viewBox="0 0 16 16"><line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.5"/><rect x="3.5" y="3" width="2.5" height="10" fill="currentColor"/><rect x="9" y="4.5" width="2.5" height="7" fill="currentColor"/></svg>',
+    bottom:  '<svg viewBox="0 0 16 16"><line x1="2" y1="14.5" x2="14" y2="14.5" stroke="currentColor" stroke-width="1.5"/><rect x="3.5" y="3" width="2.5" height="10" fill="currentColor"/><rect x="9" y="6" width="2.5" height="7" fill="currentColor"/></svg>',
+    distH:   '<svg viewBox="0 0 16 16"><rect x="1" y="3.5" width="3" height="9" fill="currentColor"/><rect x="6.5" y="3.5" width="3" height="9" fill="currentColor"/><rect x="12" y="3.5" width="3" height="9" fill="currentColor"/></svg>',
+    distV:   '<svg viewBox="0 0 16 16"><rect x="3.5" y="1" width="9" height="3" fill="currentColor"/><rect x="3.5" y="6.5" width="9" height="3" fill="currentColor"/><rect x="3.5" y="12" width="9" height="3" fill="currentColor"/></svg>',
+  };
+  btn('Align left edges',           ICONS.left,    () => alignSelection('left'));
+  btn('Align horizontal centers',    ICONS.hcenter, () => alignSelection('hcenter'));
+  btn('Align right edges',          ICONS.right,   () => alignSelection('right'));
+  btn('Distribute horizontally (equal gaps)', ICONS.distH, () => distributeSelection('h'), count < 3);
+  btn('Align top edges',            ICONS.top,     () => alignSelection('top'));
+  btn('Align vertical centers',      ICONS.vmiddle, () => alignSelection('vmiddle'));
+  btn('Align bottom edges',         ICONS.bottom,  () => alignSelection('bottom'));
+  btn('Distribute vertically (equal gaps)',   ICONS.distV, () => distributeSelection('v'), count < 3);
+  propsPanel.appendChild(grid);
 }
 
 function clearSelection() {
@@ -2856,7 +2957,7 @@ window.addEventListener('mouseup', () => {
     handlesGroup.style.display = selection.length ? '' : 'none';
     refreshElementList();
     if (selection.length === 1) populateProps(selection[0]);
-    else if (selection.length > 1) propsPanel.innerHTML = `<div class="empty">${selection.length} elements selected</div>`;
+    else if (selection.length > 1) renderMultiSelectProps(selection.length);
     else propsPanel.innerHTML = '<div class="empty">Select an element</div>';
     drag = null;
     return;
@@ -3420,7 +3521,7 @@ window.addEventListener('paste', (e) => {
   }
 });
 
-function addImageToCanvas(dataUrl) {
+function addImageToCanvas(dataUrl, centerX, centerY) {
   const img = new Image();
   img.onload = () => {
     pushUndo();
@@ -3429,8 +3530,10 @@ function addImageToCanvas(dataUrl) {
     const ratio = Math.min(currentW * 0.8 / nw, currentH * 0.8 / nh, 1);
     const w = nw * ratio;
     const h = nh * ratio;
-    const x = (currentW - w) / 2;
-    const y = (currentH - h) / 2;
+    const cx = Number.isFinite(centerX) ? centerX : currentW / 2;
+    const cy = Number.isFinite(centerY) ? centerY : currentH / 2;
+    const x = cx - w / 2;
+    const y = cy - h / 2;
     const el = document.createElementNS(SVG_NS, 'image');
     el.setAttribute('x', x.toFixed(1));
     el.setAttribute('y', y.toFixed(1));
@@ -3445,6 +3548,73 @@ function addImageToCanvas(dataUrl) {
   img.onerror = () => alert('Could not load pasted image.');
   img.src = dataUrl;
 }
+
+// =============================================================
+// Drag & drop file import
+// =============================================================
+
+canvasInner.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.types.includes('Files')) return;
+  e.preventDefault();
+  canvasInner.classList.add('drop-hover');
+});
+canvasInner.addEventListener('dragover', (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.types.includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  canvasInner.classList.add('drop-hover');
+});
+canvasInner.addEventListener('dragleave', (e) => {
+  if (e.target === canvasInner) canvasInner.classList.remove('drop-hover');
+});
+canvasInner.addEventListener('drop', async (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  canvasInner.classList.remove('drop-hover');
+  const files = Array.from(e.dataTransfer.files);
+  const sp = svgPt(e);
+  const isSvg   = (f) => f.type === 'image/svg+xml' || /\.svg$/i.test(f.name);
+  const isImage = (f) => f.type.startsWith('image/') && !isSvg(f);
+  const svgFiles = files.filter(isSvg);
+  const imgFiles = files.filter(isImage);
+
+  if (svgFiles.length) {
+    pushUndo();
+    let added = 0;
+    for (const f of svgFiles) {
+      try {
+        const text = await f.text();
+        added += appendSvgIntoCurrent(text);
+      } catch {}
+    }
+    if (added > 0) {
+      persistCurrent();
+      refreshElementList();
+      refreshIconList();
+    }
+  }
+  for (let i = 0; i < imgFiles.length; i++) {
+    const f = imgFiles[i];
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result));
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      addImageToCanvas(dataUrl, sp.x + i * 10, sp.y + i * 10);
+    } catch {}
+  }
+});
+
+// Prevent the browser from navigating to the file when a drop lands outside
+// the canvas (e.g. on the sidebar or top bar).
+['dragover', 'drop'].forEach(t => {
+  window.addEventListener(t, (e) => {
+    if (!e.dataTransfer || !e.dataTransfer.types.includes('Files')) return;
+    if (!canvasInner.contains(e.target)) e.preventDefault();
+  });
+});
 
 // =============================================================
 // GitHub star count badge
