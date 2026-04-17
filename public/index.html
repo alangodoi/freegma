@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG Editor</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top bar -->
+    <header id="topbar">
+      <div class="title">SVG EDITOR</div>
+      <div class="actions">
+        <button id="btnNew" data-hint="Start a fresh drawing (prompts for canvas size)">+ New</button>
+        <button id="btnImport" data-hint="Load SVG files from disk or paste markup">Import</button>
+        <button id="btnRename" data-hint="Rename the current drawing in this session">Rename</button>
+        <div class="menu-wrap">
+          <button id="btnExport" class="primary" data-hint="Export the current drawing to a file (SVG, PNG, or JPEG)">Export ▾</button>
+          <div id="exportMenu" class="menu hidden">
+            <button class="menu-item" data-format="svg">SVG <span class="menu-sub">vector, editable</span></button>
+            <button class="menu-item" data-format="png">PNG <span class="menu-sub">raster, transparent</span></button>
+            <button class="menu-item" data-format="jpeg">JPEG <span class="menu-sub">raster, white bg</span></button>
+          </div>
+        </div>
+        <button id="btnCopy" data-hint="Copy clean SVG markup to clipboard">Copy SVG</button>
+        <button id="btnDelete" class="danger" data-hint="Remove the current drawing from this session (does not delete any file)">Remove</button>
+      </div>
+    </header>
+
+    <!-- Main layout -->
+    <div id="main">
+      <!-- Left sidebar -->
+      <aside id="sidebar">
+
+        <section class="panel">
+          <header class="panel-head">Drawings</header>
+          <div class="panel-body">
+            <div id="iconList"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">Canvas</header>
+          <div class="panel-body">
+            <div class="field">
+              <span class="field-label">Size</span>
+              <div class="field-ctrl">
+                <div class="mini" data-hint="Canvas width (bounds only; shapes keep their coordinates)">
+                  <span>W</span><input type="number" id="canvasW" min="1" step="1" value="512">
+                </div>
+                <div class="mini" data-hint="Canvas height (bounds only; shapes keep their coordinates)">
+                  <span>H</span><input type="number" id="canvasH" min="1" step="1" value="512">
+                </div>
+              </div>
+            </div>
+            <div class="chips" id="sizePresets"></div>
+            <button id="btnScale" class="full" data-hint="Resize the drawing to a new size (scales every shape proportionally)">Scale drawing…</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">Tools</header>
+          <div class="panel-body">
+            <div class="tool-grid" id="addShapeRow"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">Paint</header>
+          <div class="panel-body">
+            <div class="field">
+              <span class="field-label">New fill</span>
+              <div class="field-ctrl">
+                <input type="color" id="drawColor" value="#888888" data-hint="Color applied to newly added shapes">
+                <span class="muted" id="drawColorHex">#888888</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+
+      <!-- Center canvas -->
+      <main id="canvasArea">
+        <div id="canvasInner">
+          <svg id="svgCanvas" viewBox="-50 -50 612 612" width="100%" height="100%"></svg>
+        </div>
+        <div class="hint">Scroll: zoom · Right-drag: pan · Ctrl+Z: undo · Ctrl+Shift+Z / Ctrl+Y: redo · Ctrl+D: duplicate · Ctrl+Click: multi-select · Del: delete · Arrows: nudge (Shift = ×10) · Alt+click path: add anchor · Del on anchor: remove</div>
+      </main>
+
+      <!-- Right properties panel -->
+      <aside id="props">
+        <section class="panel">
+          <header class="panel-head">Layers</header>
+          <div class="panel-body">
+            <div id="elementList"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">Properties</header>
+          <div class="panel-body" id="propsPanel">
+            <div class="empty">Select an element</div>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Import dialog -->
+  <div id="importDialog" class="dialog hidden">
+    <div class="dialog-box">
+      <div class="dialog-title">Import SVG</div>
+      <input type="file" id="importFile" accept=".svg,image/svg+xml" multiple>
+      <div class="muted">…or paste markup below</div>
+      <textarea id="importText" placeholder="Paste SVG markup here..."></textarea>
+      <input type="text" id="importName" placeholder="Name (lowercase, no spaces) — optional when using file picker">
+      <fieldset class="import-mode">
+        <label><input type="radio" name="importMode" value="new" checked> Open as new drawing</label>
+        <label><input type="radio" name="importMode" value="current"> Add into current drawing</label>
+      </fieldset>
+      <div class="row end">
+        <button id="importCancel">Cancel</button>
+        <button id="importOk" class="primary">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/editor.js" type="module"></script>
+</body>
+</html>
