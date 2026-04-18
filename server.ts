@@ -41,7 +41,13 @@ Bun.serve({
     if (await file.exists()) {
       const ext = filePath.substring(filePath.lastIndexOf("."));
       return new Response(file, {
-        headers: { "Content-Type": MIME[ext] || "application/octet-stream" },
+        headers: {
+          "Content-Type": MIME[ext] || "application/octet-stream",
+          // Revalidate on every request so deploys always serve the freshest
+          // editor.js / style.css / index.html. The files are tiny, so we
+          // don't lose meaningful performance by skipping the browser cache.
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
       });
     }
 
