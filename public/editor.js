@@ -2986,7 +2986,10 @@ function svgPt(e) {
 }
 
 svgCanvas.addEventListener('mousedown', (e) => {
-  if (e.button === 2) return;
+  // Only left-click drives select / draw / marquee / resize.
+  // Middle button is pan (handled on canvasInner); right button opens the
+  // context menu.
+  if (e.button !== 0) return;
   const tgt = e.target;
 
   // Handle-corner drags and path-anchor drags take precedence over an armed
@@ -3304,7 +3307,7 @@ canvasInner.addEventListener('wheel', (e) => {
 
 canvasInner.addEventListener('contextmenu', (e) => e.preventDefault());
 canvasInner.addEventListener('mousedown', (e) => {
-  if (e.button !== 2) return;
+  if (e.button !== 1) return; // middle mouse button
   e.preventDefault();
   pan = { x: e.clientX, y: e.clientY };
   canvasInner.style.cursor = 'grabbing';
@@ -3320,7 +3323,7 @@ window.addEventListener('mousemove', (e) => {
   pan.x = e.clientX; pan.y = e.clientY;
 });
 window.addEventListener('mouseup', (e) => {
-  if (e.button === 2 && pan) { pan = null; canvasInner.style.cursor = ''; }
+  if (e.button === 1 && pan) { pan = null; canvasInner.style.cursor = ''; }
 });
 
 // =============================================================
