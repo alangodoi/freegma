@@ -408,6 +408,21 @@ input[type=number] { -moz-appearance: textfield; }
 
 input[type=range] { flex: 1; accent-color: var(--accent); }
 
+select {
+  background: var(--bg-input);
+  color: var(--tx);
+  border: 1px solid var(--bd);
+  height: var(--h);
+  padding: 0 8px;
+  font-family: var(--ui);
+  font-size: 11px;
+  border-radius: var(--r);
+  outline: none;
+  cursor: pointer;
+  min-width: 0;
+}
+select:focus { border-color: var(--bd-hi); }
+
 textarea {
   background: var(--bg-input);
   color: var(--tx);

@@ -722,6 +722,13 @@ function scaleElement(el, sx, sy) {
     el.setAttribute('y', mul('y', sy));
     el.setAttribute('width',  mul('width',  sx));
     el.setAttribute('height', mul('height', sy));
+  } else if (tag === 'text') {
+    const newX = mul('x', sx);
+    el.setAttribute('x', newX);
+    el.setAttribute('y', mul('y', sy));
+    for (const t of el.querySelectorAll(':scope > tspan')) t.setAttribute('x', newX);
+    const fs = parseFloat(el.getAttribute('font-size'));
+    if (fs && isFinite(fs)) el.setAttribute('font-size', String(fs * minS));
   } else if (tag === 'path') {
     if (el.dataset.rect === '1') {
       el.dataset.x = (+el.dataset.x || 0) * sx;
@@ -2522,6 +2529,131 @@ function populateProps(el) {
       <b>A</b> rx,ry rot la sw x,y arc<br>
       <b>Z</b> close &nbsp; <i>lowercase = relative</i>`;
     propsPanel.appendChild(ref);
+  } else if (tag === 'text') {
+    // ---- Content ----
+    {
+      const { row, ctrl } = field('Text');
+      const ta = document.createElement('textarea');
+      ta.value = getMultilineText(el);
+      ta.style.height = '54px';
+      ta.style.flex = '1';
+      ta.dataset.hint = 'Text content — Enter inserts a line break (rendered as <tspan>s)';
+      ta.addEventListener('input', () => {
+        setMultilineText(el, ta.value);
+        updateHandles();
+        refreshElementList();
+      });
+      ctrl.appendChild(ta);
+      propsPanel.appendChild(row);
+    }
+    // ---- Font size ----
+    {
+      const { row, ctrl } = field('Font');
+      const curSize = parseFloat(el.getAttribute('font-size')) || 16;
+      ctrl.appendChild(miniInput('Size', curSize, {
+        min: 1,
+        step: 'any',
+        field: 'font-size',
+        hint: 'Font size in canvas units',
+        onInput: (ev) => { el.setAttribute('font-size', ev.target.value || 0); },
+      }).wrap);
+      propsPanel.appendChild(row);
+    }
+    // ---- Font family ----
+    {
+      const { row, ctrl } = field('Family');
+      const sel = document.createElement('select');
+      sel.dataset.hint = 'Font family';
+      sel.style.flex = '1';
+      const families = [
+        { label: 'System',       value: 'system-ui, -apple-system, sans-serif' },
+        { label: 'Sans-serif',   value: 'sans-serif' },
+        { label: 'Serif',        value: 'serif' },
+        { label: 'Monospace',    value: 'monospace' },
+        { label: 'Courier New',  value: '"Courier New", Courier, monospace' },
+        { label: 'Georgia',      value: 'Georgia, serif' },
+      ];
+      const cur = el.getAttribute('font-family') || families[0].value;
+      let matched = false;
+      for (const f of families) {
+        const o = document.createElement('option');
+        o.value = f.value; o.textContent = f.label;
+        if (f.value === cur) { o.selected = true; matched = true; }
+        sel.appendChild(o);
+      }
+      if (!matched) {
+        const o = document.createElement('option');
+        o.value = cur; o.textContent = cur;
+        o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => el.setAttribute('font-family', sel.value));
+      ctrl.appendChild(sel);
+      propsPanel.appendChild(row);
+    }
+    // ---- Font weight ----
+    {
+      const { row, ctrl } = field('Weight');
+      const sel = document.createElement('select');
+      sel.dataset.hint = 'Font weight';
+      sel.style.flex = '1';
+      const weights = [
+        { label: 'Light (300)',  value: '300' },
+        { label: 'Normal (400)', value: '400' },
+        { label: 'Medium (500)', value: '500' },
+        { label: 'Semibold (600)', value: '600' },
+        { label: 'Bold (700)',   value: '700' },
+        { label: 'Black (900)',  value: '900' },
+      ];
+      const curW = el.getAttribute('font-weight') || '400';
+      for (const w of weights) {
+        const o = document.createElement('option');
+        o.value = w.value; o.textContent = w.label;
+        if (w.value === String(curW)) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => el.setAttribute('font-weight', sel.value));
+      ctrl.appendChild(sel);
+      propsPanel.appendChild(row);
+    }
+    // ---- Alignment (text-anchor) ----
+    {
+      const { row, ctrl } = field('Align');
+      const current = el.getAttribute('text-anchor') || 'start';
+      const anchors = [
+        { value: 'start',  label: '⟸', hint: 'Left (anchor=start)' },
+        { value: 'middle', label: '⇔', hint: 'Center (anchor=middle)' },
+        { value: 'end',    label: '⟹', hint: 'Right (anchor=end)' },
+      ];
+      for (const a of anchors) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'corner-toggle' + (a.value === current ? ' active' : '');
+        b.textContent = a.label;
+        b.dataset.hint = a.hint;
+        b.addEventListener('click', () => {
+          el.setAttribute('text-anchor', a.value);
+          populateProps(el);
+        });
+        ctrl.appendChild(b);
+      }
+      propsPanel.appendChild(row);
+    }
+    // ---- Position ----
+    {
+      const { row, ctrl } = field('Position');
+      const onXY = (key) => (ev) => {
+        const v = ev.target.value || 0;
+        el.setAttribute(key, v);
+        if (key === 'x') {
+          for (const t of el.querySelectorAll(':scope > tspan')) t.setAttribute('x', v);
+        }
+        updateHandles();
+      };
+      ctrl.appendChild(miniInput('X', el.getAttribute('x') || 0, { onInput: onXY('x'), field: 'x', step: 'any' }).wrap);
+      ctrl.appendChild(miniInput('Y', el.getAttribute('y') || 0, { onInput: onXY('y'), field: 'y', step: 'any' }).wrap);
+      propsPanel.appendChild(row);
+    }
   }
 
   // ---- Actions ----
@@ -2623,6 +2755,12 @@ function moveElement(el, dx, dy) {
   } else if (!hasRotate && (tag === 'rect' || tag === 'image')) {
     el.setAttribute('x', parseFloat(el.getAttribute('x')||0) + dx);
     el.setAttribute('y', parseFloat(el.getAttribute('y')||0) + dy);
+  } else if (!hasRotate && tag === 'text') {
+    const newX = parseFloat(el.getAttribute('x')||0) + dx;
+    const newY = parseFloat(el.getAttribute('y')||0) + dy;
+    el.setAttribute('x', newX);
+    el.setAttribute('y', newY);
+    for (const t of el.querySelectorAll(':scope > tspan')) t.setAttribute('x', newX);
   } else if (!hasRotate && (tag === 'circle' || tag === 'ellipse')) {
     el.setAttribute('cx', parseFloat(el.getAttribute('cx')||0) + dx);
     el.setAttribute('cy', parseFloat(el.getAttribute('cy')||0) + dy);
@@ -2731,8 +2869,19 @@ svgCanvas.addEventListener('mousedown', (e) => {
     const tag = pendingShape.tag;
     const el = document.createElementNS(SVG_NS, tag);
     const c = newFillColor;
-    if (tag === 'line') { el.setAttribute('stroke', c); el.setAttribute('stroke-width', Math.max(2, Math.min(currentW, currentH) * 0.012)); }
-    else el.setAttribute('fill', c);
+    if (tag === 'line') {
+      el.setAttribute('stroke', c);
+      el.setAttribute('stroke-width', Math.max(2, Math.min(currentW, currentH) * 0.012));
+    } else if (tag === 'text') {
+      el.setAttribute('fill', c);
+      el.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+      el.setAttribute('font-size', '14');
+      el.setAttribute('dominant-baseline', 'hanging');
+      el.setAttribute('text-anchor', 'start');
+      setMultilineText(el, 'Text');
+    } else {
+      el.setAttribute('fill', c);
+    }
     setDrawGeometry(el, tag, sp.x, sp.y, sp.x, sp.y);
     svgCanvas.insertBefore(el, handlesGroup);
     drag = { mode: 'draw', tag, startX: sp.x, startY: sp.y, el };
@@ -2767,7 +2916,9 @@ svgCanvas.addEventListener('mousedown', (e) => {
       const startMatrices = selection.map(snapshotMatrix);
       drag = { mode: 'rotate', cx, cy, startAngle: Math.atan2(sp.y - cy, sp.x - cx), startMatrices, x: sp.x, y: sp.y };
     } else if (selection.length === 1) {
-      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: selection[0].getBBox(), x: sp.x, y: sp.y };
+      const startFontSize = selection[0].tagName === 'text'
+        ? (parseFloat(selection[0].getAttribute('font-size')) || 16) : null;
+      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: selection[0].getBBox(), startX: sp.x, startY: sp.y, startFontSize, x: sp.x, y: sp.y };
     }
     e.preventDefault(); e.stopPropagation();
     return;
@@ -2890,15 +3041,41 @@ window.addEventListener('mousemove', (e) => {
     drag.appliedY = finalY;
     renderGuides(vGuides, hGuides);
   } else if (drag.mode === 'resize' && selection.length === 1) {
-    const dx = sp.x - drag.x, dy = sp.y - drag.y;
-    resizeElement(selection[0], dx, dy, drag.handle, drag.startBBox);
-    const snap = e.altKey
-      ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
-      : computeResizeSnap(selection[0], drag.handle);
-    if (snap.snapDx || snap.snapDy) {
-      resizeElement(selection[0], snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
+    const el0 = selection[0];
+    if (el0.tagName === 'text' && drag.startFontSize) {
+      // Text: scale font-size from cumulative handle drag against the start
+      // bbox. The generic transform-based fallback doesn't accumulate (each
+      // mousemove overwrites with a near-identity scale) — this path
+      // produces a real font-size change the user can see and export.
+      const cumDx = sp.x - drag.startX;
+      const cumDy = sp.y - drag.startY;
+      const signX = drag.handle.includes('e') ? 1 : drag.handle.includes('w') ? -1 : 0;
+      const signY = drag.handle.includes('s') ? 1 : drag.handle.includes('n') ? -1 : 0;
+      const bbw = drag.startBBox.width  || 1;
+      const bbh = drag.startBBox.height || 1;
+      let scale = 1;
+      if (signX !== 0 && signY !== 0) {
+        const sx = (bbw + cumDx * signX) / bbw;
+        const sy = (bbh + cumDy * signY) / bbh;
+        scale = Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy;
+      } else if (signX !== 0) {
+        scale = (bbw + cumDx * signX) / bbw;
+      } else if (signY !== 0) {
+        scale = (bbh + cumDy * signY) / bbh;
+      }
+      scale = Math.max(0.1, scale);
+      el0.setAttribute('font-size', (drag.startFontSize * scale).toFixed(2));
+    } else {
+      const dx = sp.x - drag.x, dy = sp.y - drag.y;
+      resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
+      const snap = e.altKey
+        ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+        : computeResizeSnap(el0, drag.handle);
+      if (snap.snapDx || snap.snapDy) {
+        resizeElement(el0, snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
+      }
+      renderGuides(snap.vGuides, snap.hGuides);
     }
-    renderGuides(snap.vGuides, snap.hGuides);
     populateProps(selection[0]);
     drag.x = sp.x; drag.y = sp.y;
   } else if (drag.mode === 'rotate') {
@@ -3107,6 +3284,33 @@ window.addEventListener('keydown', (e) => {
 // Add shape buttons (positions scale with canvas size)
 // =============================================================
 
+// Multi-line <text> support. SVG <text> ignores newlines, so we store each
+// line as a child <tspan>. Subsequent tspans use x=[parent's x] to reset
+// horizontal position and dy=1.2em to shift to the next line. Empty lines
+// still advance position and render as blank rows.
+function setMultilineText(el, text) {
+  const parentX = el.getAttribute('x') || 0;
+  while (el.firstChild) el.removeChild(el.firstChild);
+  const lines = String(text).split('\n');
+  if (lines.length === 1) {
+    el.textContent = lines[0];
+    return;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const t = document.createElementNS(SVG_NS, 'tspan');
+    t.setAttribute('x', parentX);
+    t.setAttribute('dy', i === 0 ? '0' : '1.2em');
+    if (lines[i]) t.textContent = lines[i];
+    el.appendChild(t);
+  }
+}
+
+function getMultilineText(el) {
+  const tspans = el.querySelectorAll(':scope > tspan');
+  if (tspans.length === 0) return el.textContent || '';
+  return Array.from(tspans).map(t => t.textContent || '').join('\n');
+}
+
 function shapeDefaults(tag, px, py) {
   const cx = px != null ? px : currentW / 2;
   const cy = py != null ? py : currentH / 2;
@@ -3117,6 +3321,7 @@ function shapeDefaults(tag, px, py) {
     case 'ellipse': return { cx, cy, rx: s*0.12, ry: s*0.08 };
     case 'line':    return { x1: cx - s*0.1, y1: cy - s*0.1, x2: cx + s*0.1, y2: cy + s*0.1, 'stroke-width': Math.max(2, s*0.012) };
     case 'path':    return { d: `M${(cx-s*0.11).toFixed(1)},${cy.toFixed(1)} L${cx.toFixed(1)},${(cy-s*0.11).toFixed(1)} L${(cx+s*0.11).toFixed(1)},${cy.toFixed(1)} L${cx.toFixed(1)},${(cy+s*0.11).toFixed(1)} Z` };
+    case 'text':    return { x: cx, y: cy, 'font-size': 14, 'font-family': 'system-ui, -apple-system, sans-serif' };
   }
   return {};
 }
@@ -3142,6 +3347,10 @@ function setDrawGeometry(el, tag, x1, y1, x2, y2) {
     const cx = x + w / 2, cy = y + h / 2;
     const rx = w / 2, ry = h / 2;
     el.setAttribute('d', `M${(cx-rx).toFixed(1)},${cy.toFixed(1)} L${cx.toFixed(1)},${(cy-ry).toFixed(1)} L${(cx+rx).toFixed(1)},${cy.toFixed(1)} L${cx.toFixed(1)},${(cy+ry).toFixed(1)} Z`);
+  } else if (tag === 'text') {
+    // Text has no drag-to-size — keep it anchored at the click point.
+    el.setAttribute('x', x1);
+    el.setAttribute('y', y1);
   }
 }
 
@@ -3151,6 +3360,7 @@ const shapes = [
   { label: 'Ellipse', tag: 'ellipse', icon: '⬭', hint: 'Click a point or drag to size an ellipse' },
   { label: 'Line',    tag: 'line',    icon: '╱', hint: 'Click a point or drag from one end to the other' },
   { label: 'Path',    tag: 'path',    icon: '✎', hint: 'Click a point or drag to size a diamond path (editable after)' },
+  { label: 'Text',    tag: 'text',    icon: 'T', hint: 'Click the canvas to place text; edit content and font in the properties panel' },
 ];
 const shapeButtons = [];
 function enterDrawMode(tag, button) {
