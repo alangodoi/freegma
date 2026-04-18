@@ -3968,7 +3968,13 @@ document.addEventListener('keydown', (e) => {
 svgCanvas.addEventListener('contextmenu', (e) => {
   let tgt = e.target;
   if (tgt.parentNode && tgt.parentNode.tagName === 'text') tgt = tgt.parentNode;
-  const isEmpty = tgt === svgCanvas || tgt === boundsRect ||
+  // Mirror the left-click promotion: walk up to the outermost element that
+  // is a direct child of svgCanvas so right-clicking inside a <g> selects
+  // the whole group, not an individual child.
+  while (tgt && tgt.parentNode && tgt.parentNode !== svgCanvas) {
+    tgt = tgt.parentNode;
+  }
+  const isEmpty = !tgt || tgt === svgCanvas || tgt === boundsRect ||
                   (tgt.dataset && (tgt.dataset.bounds || tgt.dataset.bg || tgt.dataset.marquee));
   e.preventDefault();
   openContextMenu(e, isEmpty ? null : tgt);
