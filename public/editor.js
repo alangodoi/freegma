@@ -27,7 +27,7 @@ const elementList  = document.getElementById('elementList');
 const propsPanel   = document.getElementById('propsPanel');
 const drawColor    = document.getElementById('drawColor');
 const drawColorHex = document.getElementById('drawColorHex');
-const addShapeRow  = document.getElementById('addShapeRow');
+const addShapeRow  = document.getElementById('floatingTools');
 
 // Color applied to newly added shapes. Driven via the sidebar swatch button.
 let newFillColor = (drawColor && drawColor.dataset.value) || '#888888';
@@ -2959,9 +2959,16 @@ svgCanvas.addEventListener('mousedown', (e) => {
     }
   }
 
+  // When clicking inside a multi-line <text> (each line is a <tspan>),
+  // promote the hit to the parent <text> so we select the whole element,
+  // not just the clicked line.
+  let pickTgt = tgt;
+  if (pickTgt && pickTgt.parentNode && pickTgt.parentNode.tagName === 'text') {
+    pickTgt = pickTgt.parentNode;
+  }
   const addToSel = e.ctrlKey || e.metaKey;
-  if (addToSel) selectElement(tgt, true);
-  else if (!selection.includes(tgt)) selectElement(tgt);
+  if (addToSel) selectElement(pickTgt, true);
+  else if (!selection.includes(pickTgt)) selectElement(pickTgt);
   pushUndo();
   const sp = svgPt(e);
   drag = { mode: 'move', startX: sp.x, startY: sp.y, appliedX: 0, appliedY: 0, x: sp.x, y: sp.y };
@@ -3369,18 +3376,32 @@ function enterDrawMode(tag, button) {
   clearSelection();
   pendingShape = { tag, button };
   button.classList.add('active');
+  if (typeof selectBtn !== 'undefined') selectBtn.classList.remove('active');
   canvasInner.style.cursor = 'crosshair';
 }
 function exitDrawMode() {
-  if (!pendingShape) return;
-  pendingShape.button.classList.remove('active');
-  pendingShape = null;
+  if (pendingShape) {
+    pendingShape.button.classList.remove('active');
+    pendingShape = null;
+  }
+  if (typeof selectBtn !== 'undefined') selectBtn.classList.add('active');
   if (!pan) canvasInner.style.cursor = '';
 }
+// Select tool — first button in the floating toolbar. Highlights when no
+// shape tool is armed; clicking it also cancels draw mode.
+const selectBtn = document.createElement('button');
+selectBtn.type = 'button';
+selectBtn.innerHTML = '↖';
+selectBtn.dataset.hint = 'Select (cancel any armed tool)';
+selectBtn.classList.add('active');
+selectBtn.addEventListener('click', () => exitDrawMode());
+addShapeRow.appendChild(selectBtn);
+
 for (const s of shapes) {
   const btn = document.createElement('button');
-  btn.innerHTML = `<span class="ti">${s.icon}</span><span class="tl">${s.label}</span>`;
-  btn.dataset.hint = s.hint;
+  btn.type = 'button';
+  btn.innerHTML = s.icon;
+  btn.dataset.hint = `${s.label} — ${s.hint}`;
   btn.dataset.tag = s.tag;
   btn.addEventListener('click', () => enterDrawMode(s.tag, btn));
   addShapeRow.appendChild(btn);
