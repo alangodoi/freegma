@@ -3424,6 +3424,134 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// Selection transforms — flip around the union bbox center so a single
+// shape flips in place and a multi-selection mirrors as a group.
+function flipSelection(axis) {
+  if (!selection.length) return;
+  pushUndo();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of selection) {
+    const b = bboxInCanvas(el);
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.width  > maxX) maxX = b.x + b.width;
+    if (b.y + b.height > maxY) maxY = b.y + b.height;
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const sx = axis === 'h' ? -1 : 1;
+  const sy = axis === 'v' ? -1 : 1;
+  const flip = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${sx},${sy}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
+  for (const el of selection) {
+    const cur = el.getAttribute('transform') || '';
+    el.setAttribute('transform', cur ? `${flip} ${cur}` : flip);
+  }
+  updateHandles();
+  refreshElementList();
+}
+
+function duplicateSelection() {
+  if (!selection.length) return;
+  pushUndo();
+  const clones = [];
+  for (const el of selection) {
+    const c = el.cloneNode(true);
+    svgCanvas.insertBefore(c, handlesGroup);
+    clones.push(c);
+  }
+  selection = clones;
+  updateHandles();
+  refreshElementList();
+}
+
+function deleteSelection() {
+  if (!selection.length) return;
+  pushUndo();
+  for (const el of selection) svgCanvas.removeChild(el);
+  clearSelection();
+}
+
+function bringSelectionToFront() {
+  if (!selection.length) return;
+  pushUndo();
+  for (const el of selection) svgCanvas.insertBefore(el, handlesGroup);
+  refreshElementList();
+  updateHandles();
+}
+
+function sendSelectionToBack() {
+  if (!selection.length) return;
+  pushUndo();
+  const bg = svgCanvas.querySelector(':scope > [data-bg="1"]');
+  const insertPoint = bg ? bg.nextSibling : svgCanvas.firstChild;
+  for (let i = 0; i < selection.length; i++) {
+    svgCanvas.insertBefore(selection[i], insertPoint);
+  }
+  refreshElementList();
+  updateHandles();
+}
+
+// Right-click context menu
+const ctxMenu = document.getElementById('ctxMenu');
+function buildCtxMenu(hasSelection) {
+  ctxMenu.innerHTML = '';
+  const mk = (label, shortcut, handler, opts = {}) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    const left = document.createElement('span'); left.textContent = label;
+    const right = document.createElement('span'); right.className = 'shortcut'; right.textContent = shortcut || '';
+    b.appendChild(left); b.appendChild(right);
+    if (opts.danger) b.classList.add('danger');
+    if (opts.disabled) b.disabled = true;
+    else b.addEventListener('click', () => { closeContextMenu(); handler(); });
+    ctxMenu.appendChild(b);
+  };
+  const sep = () => {
+    const d = document.createElement('div');
+    d.className = 'sep';
+    ctxMenu.appendChild(d);
+  };
+  const hasClip = !!localClipboardMarkup;
+  mk('Flip horizontally', '', () => flipSelection('h'), { disabled: !hasSelection });
+  mk('Flip vertically',   '', () => flipSelection('v'), { disabled: !hasSelection });
+  sep();
+  mk('Duplicate', 'Ctrl+D', () => duplicateSelection(),          { disabled: !hasSelection });
+  mk('Copy',      'Ctrl+C', () => copySelectionToClipboard(),    { disabled: !hasSelection });
+  mk('Paste',     'Ctrl+V', () => pasteClipboardMarkup(localClipboardMarkup), { disabled: !hasClip });
+  mk('Delete',    'Del',    () => deleteSelection(),             { disabled: !hasSelection, danger: true });
+  sep();
+  mk('Bring to front', '', () => bringSelectionToFront(), { disabled: !hasSelection });
+  mk('Send to back',   '', () => sendSelectionToBack(),   { disabled: !hasSelection });
+}
+
+function openContextMenu(e, hitEl) {
+  if (hitEl && !selection.includes(hitEl)) selectElement(hitEl);
+  buildCtxMenu(selection.length > 0);
+  ctxMenu.classList.remove('hidden');
+  const w = ctxMenu.offsetWidth || 200;
+  const h = ctxMenu.offsetHeight || 240;
+  const left = Math.min(e.clientX, window.innerWidth - w - 8);
+  const top  = Math.min(e.clientY, window.innerHeight - h - 8);
+  ctxMenu.style.left = Math.max(4, left) + 'px';
+  ctxMenu.style.top  = Math.max(4, top) + 'px';
+}
+function closeContextMenu() { ctxMenu.classList.add('hidden'); }
+document.addEventListener('mousedown', (e) => {
+  if (ctxMenu.classList.contains('hidden')) return;
+  if (!ctxMenu.contains(e.target)) closeContextMenu();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !ctxMenu.classList.contains('hidden')) closeContextMenu();
+});
+svgCanvas.addEventListener('contextmenu', (e) => {
+  let tgt = e.target;
+  if (tgt.parentNode && tgt.parentNode.tagName === 'text') tgt = tgt.parentNode;
+  const isEmpty = tgt === svgCanvas || tgt === boundsRect ||
+                  (tgt.dataset && (tgt.dataset.bounds || tgt.dataset.bg || tgt.dataset.marquee));
+  e.preventDefault();
+  openContextMenu(e, isEmpty ? null : tgt);
+});
+
 // Internal copy/paste. Ctrl+V uses the existing window paste handler below;
 // this path wraps the selection in a marker <svg data-freegma-clip> so we
 // can recognise our own payload and ignore arbitrary clipboard text.
