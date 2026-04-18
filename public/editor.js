@@ -812,13 +812,112 @@ function triggerDownload(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+// Google Fonts loaded by index.html. We embed an @import for the ones
+// actually used in the drawing so exported SVGs render with the right
+// font when opened in a browser — matching the "editable text + external
+// font" pattern used by Figma / Adobe XD SVG exports.
+const GOOGLE_FONTS = {
+  'Inter':            [300, 400, 500, 600, 700, 900],
+  'Roboto':           [300, 400, 500, 700, 900],
+  'Poppins':          [300, 400, 500, 600, 700, 900],
+  'Montserrat':       [300, 400, 500, 600, 700, 900],
+  'DM Sans':          [400, 500, 700],
+  'Oswald':           [300, 400, 500, 600, 700],
+  'Playfair Display': [400, 500, 700, 900],
+  'Lora':             [400, 500, 700],
+  'Fira Code':        [400, 600],
+  'Space Mono':       [400, 700],
+};
+
+function extractFirstFamily(family) {
+  if (!family) return null;
+  const m = family.match(/^\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z][\w\s-]*?))(?:\s*,|\s*$)/);
+  if (!m) return null;
+  return (m[1] || m[2] || m[3]).trim();
+}
+
+function collectFontUsage(clone) {
+  const usage = new Map();
+  const texts = clone.querySelectorAll('text');
+  for (const t of texts) {
+    const family = extractFirstFamily(t.getAttribute('font-family'));
+    if (!family || !GOOGLE_FONTS[family]) continue;
+    const weightAttr = parseInt(t.getAttribute('font-weight'), 10);
+    const w = GOOGLE_FONTS[family].includes(weightAttr) ? weightAttr : 400;
+    if (!usage.has(family)) usage.set(family, new Set());
+    usage.get(family).add(w);
+  }
+  return usage;
+}
+
+function buildGoogleFontsCssUrl(usage) {
+  const families = [...usage.entries()]
+    .map(([name, set]) => `family=${encodeURIComponent(name).replace(/%20/g, '+')}:wght@${[...set].sort((a,b)=>a-b).join(';')}`)
+    .join('&');
+  return `https://fonts.googleapis.com/css2?${families}&display=swap`;
+}
+
+// Inline actual woff2 bytes as @font-face data URLs. Used for raster export,
+// where SVG-in-img is sandboxed and can't fetch external resources.
+async function buildInlineFontCss(usage) {
+  if (usage.size === 0) return null;
+  const cssUrl = buildGoogleFontsCssUrl(usage);
+  let css;
+  try {
+    const resp = await fetch(cssUrl);
+    if (!resp.ok) return null;
+    css = await resp.text();
+  } catch { return null; }
+  const urls = [...new Set([...css.matchAll(/url\(([^)]+)\)/g)].map(m => m[1].replace(/['"]/g, '')))]
+    .filter(u => u.startsWith('https://fonts.gstatic.com'));
+  for (const u of urls) {
+    try {
+      const r = await fetch(u);
+      if (!r.ok) continue;
+      const buf = await r.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      const dataUrl = `data:font/woff2;base64,${btoa(bin)}`;
+      css = css.split(u).join(dataUrl);
+    } catch {}
+  }
+  return css;
+}
+
+async function embedInlineFontsInSvg(clone) {
+  const usage = collectFontUsage(clone);
+  const css = await buildInlineFontCss(usage);
+  if (!css) return;
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  const style = document.createElementNS(SVG_NS, 'style');
+  style.setAttribute('type', 'text/css');
+  style.textContent = css;
+  defs.appendChild(style);
+  clone.insertBefore(defs, clone.firstChild);
+}
+
+function embedGoogleFontsInSvg(clone) {
+  const usage = collectFontUsage(clone);
+  if (usage.size === 0) return;
+  const importUrl = buildGoogleFontsCssUrl(usage);
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  const style = document.createElementNS(SVG_NS, 'style');
+  style.setAttribute('type', 'text/css');
+  style.textContent = `@import url('${importUrl}');`;
+  defs.appendChild(style);
+  clone.insertBefore(defs, clone.firstChild);
+}
+
 function exportSvg() {
   let name = currentId;
   if (!name) {
     name = sanitizeName(prompt('Filename (lowercase, letters/digits/_/-):', 'untitled') || '');
     if (!name) return;
   }
-  const svg = cleanClone().outerHTML;
+  const clone = cleanClone();
+  embedGoogleFontsInSvg(clone);
+  const svg = clone.outerHTML;
   drawings[name] = { svg, width: currentW, height: currentH };
   currentId = name;
   triggerDownload(new Blob([svg], { type: 'image/svg+xml' }), `${name}.svg`);
@@ -829,7 +928,12 @@ function exportSvg() {
 async function exportRaster(mime) {
   const name = currentId || sanitizeName(prompt('Filename (lowercase, letters/digits/_/-):', 'untitled') || '');
   if (!name) return;
-  const svg = cleanClone().outerHTML;
+  const clone = cleanClone();
+  // SVG-in-img can't pull @import over the network, so inline each used
+  // Google Font's woff2 as base64 @font-face data URLs. Falls back silently
+  // if fetch fails (offline) — text then renders in the system fallback.
+  await embedInlineFontsInSvg(clone);
+  const svg = clone.outerHTML;
   const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
   const svgUrl = URL.createObjectURL(svgBlob);
   try {
@@ -2563,15 +2667,27 @@ function populateProps(el) {
     {
       const { row, ctrl } = field('Family');
       const sel = document.createElement('select');
-      sel.dataset.hint = 'Font family';
+      sel.dataset.hint = 'Font family — Google-hosted web fonts or system fallbacks';
       sel.style.flex = '1';
       const families = [
-        { label: 'System',       value: 'system-ui, -apple-system, sans-serif' },
-        { label: 'Sans-serif',   value: 'sans-serif' },
-        { label: 'Serif',        value: 'serif' },
-        { label: 'Monospace',    value: 'monospace' },
-        { label: 'Courier New',  value: '"Courier New", Courier, monospace' },
-        { label: 'Georgia',      value: 'Georgia, serif' },
+        { label: 'System',           value: 'system-ui, -apple-system, sans-serif' },
+        { label: 'Sans-serif',       value: 'sans-serif' },
+        { label: 'Serif',            value: 'serif' },
+        { label: 'Monospace',        value: 'monospace' },
+        // Google Fonts (linked in index.html)
+        { label: 'Inter',            value: '"Inter", system-ui, sans-serif' },
+        { label: 'Roboto',           value: '"Roboto", system-ui, sans-serif' },
+        { label: 'Poppins',          value: '"Poppins", system-ui, sans-serif' },
+        { label: 'Montserrat',       value: '"Montserrat", system-ui, sans-serif' },
+        { label: 'DM Sans',          value: '"DM Sans", system-ui, sans-serif' },
+        { label: 'Oswald',           value: '"Oswald", system-ui, sans-serif' },
+        { label: 'Playfair Display', value: '"Playfair Display", Georgia, serif' },
+        { label: 'Lora',             value: '"Lora", Georgia, serif' },
+        { label: 'Fira Code',        value: '"Fira Code", ui-monospace, monospace' },
+        { label: 'Space Mono',       value: '"Space Mono", ui-monospace, monospace' },
+        // System-installed serif/mono classics
+        { label: 'Courier New',      value: '"Courier New", Courier, monospace' },
+        { label: 'Georgia',          value: 'Georgia, serif' },
       ];
       const cur = el.getAttribute('font-family') || families[0].value;
       let matched = false;
@@ -2581,13 +2697,19 @@ function populateProps(el) {
         if (f.value === cur) { o.selected = true; matched = true; }
         sel.appendChild(o);
       }
+      // If the element has an unrecognized font-family (e.g., from an
+      // imported SVG), show it as a disabled-looking entry so the current
+      // value is preserved rather than silently overwritten.
       if (!matched) {
         const o = document.createElement('option');
         o.value = cur; o.textContent = cur;
         o.selected = true;
         sel.appendChild(o);
       }
-      sel.addEventListener('change', () => { el.setAttribute('font-family', sel.value); updateHandles(); });
+      sel.addEventListener('change', () => {
+        el.setAttribute('font-family', sel.value);
+        updateHandles();
+      });
       ctrl.appendChild(sel);
       propsPanel.appendChild(row);
     }
