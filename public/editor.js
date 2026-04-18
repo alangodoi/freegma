@@ -3417,7 +3417,58 @@ window.addEventListener('keydown', (e) => {
     updateHandles();
     refreshElementList();
   }
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C') && selection.length) {
+    e.preventDefault();
+    copySelectionToClipboard();
+  }
 });
+
+// Internal copy/paste. Ctrl+V uses the existing window paste handler below;
+// this path wraps the selection in a marker <svg data-freegma-clip> so we
+// can recognise our own payload and ignore arbitrary clipboard text.
+let localClipboardMarkup = null;
+
+function copySelectionToClipboard() {
+  if (!selection.length) return;
+  const wrapper = document.createElementNS(SVG_NS, 'svg');
+  wrapper.setAttribute('xmlns', SVG_NS);
+  wrapper.setAttribute('data-freegma-clip', '1');
+  for (const el of selection) wrapper.appendChild(el.cloneNode(true));
+  const markup = wrapper.outerHTML;
+  localClipboardMarkup = markup;
+  // Best-effort system clipboard write so cross-tab / cross-drawing paste
+  // works. writeText can fail on older browsers / insecure contexts — the
+  // in-memory fallback covers us in that case.
+  try { navigator.clipboard.writeText(markup); } catch {}
+}
+
+function pasteClipboardMarkup(markup) {
+  if (!markup) return 0;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = markup;
+  const root = tmp.querySelector('svg[data-freegma-clip]') || tmp.querySelector('svg');
+  if (!root) return 0;
+  pushUndo();
+  const pasted = [];
+  for (const child of Array.from(root.children)) {
+    if (['defs', 'title', 'desc', 'style'].includes(child.tagName)) continue;
+    const node = child.cloneNode(true);
+    svgCanvas.insertBefore(node, handlesGroup);
+    pasted.push(node);
+  }
+  // Nudge pasted shapes off their originals so they don't stack invisibly.
+  const step = Math.max(6, Math.min(currentW, currentH) * 0.02);
+  for (const el of pasted) moveElement(el, step, step);
+  persistCurrent();
+  refreshElementList();
+  selection = pasted;
+  updateHandles();
+  handlesGroup.style.display = selection.length ? '' : 'none';
+  if (selection.length === 1) populateProps(selection[0]);
+  else if (selection.length > 1) renderMultiSelectProps(selection.length);
+  return pasted.length;
+}
 
 // =============================================================
 // Add shape buttons (positions scale with canvas size)
@@ -3881,6 +3932,17 @@ window.addEventListener('paste', (e) => {
       reader.readAsDataURL(file);
       return;
     }
+  }
+  // Internal shape paste — accept clipboard text with our marker, or fall
+  // back to the in-memory copy when the system clipboard text came from us
+  // earlier but is now empty (e.g. user copied without granting perms).
+  const text = e.clipboardData.getData('text/plain');
+  if (text && /data-freegma-clip/.test(text)) {
+    e.preventDefault();
+    pasteClipboardMarkup(text);
+  } else if (!text && localClipboardMarkup) {
+    e.preventDefault();
+    pasteClipboardMarkup(localClipboardMarkup);
   }
 });
 
