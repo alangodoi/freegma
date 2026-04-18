@@ -1110,7 +1110,9 @@ function loadDrawing(id) {
 
 function cleanClone() {
   const clone = svgCanvas.cloneNode(true);
-  clone.querySelectorAll('[data-bounds], [data-handles], [data-guides], [data-path-anchors], [data-marquee]').forEach(e => e.remove());
+  clone.querySelectorAll('[data-bounds], [data-handles], [data-guides], [data-path-anchors], [data-marquee], [data-hidden]').forEach(e => e.remove());
+  // data-locked is editor-only state; remove it without removing the element.
+  clone.querySelectorAll('[data-locked]').forEach(e => e.removeAttribute('data-locked'));
   clone.setAttribute('viewBox', `0 0 ${currentW} ${currentH}`);
   clone.setAttribute('width', String(currentW));
   clone.setAttribute('height', String(currentH));
@@ -1166,33 +1168,192 @@ function refreshIconList() {
   }
 }
 
+const expandedGroups = new WeakSet();
+let draggedLayerEl = null;
+
+function isAncestorOf(ancestor, node) {
+  let n = node;
+  while (n) {
+    if (n === ancestor) return true;
+    n = n.parentNode;
+  }
+  return false;
+}
+
+const LAYER_ICONS = {
+  eyeOn:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>',
+  eyeOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><path d="M2 2l12 12"/></svg>',
+  lockOn:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V4.5a3 3 0 0 1 6 0V7"/></svg>',
+  lockOff: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V4.5a3 3 0 0 1 5.7-1.3"/></svg>',
+  caretRight: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 3.5 l5 4.5 l-5 4.5 z"/></svg>',
+  caretDown:  '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 6 l4.5 5 l4.5 -5 z"/></svg>',
+};
+
+function layerChildrenOf(parent) {
+  const all = Array.from(parent.children);
+  if (parent === svgCanvas) {
+    return all.filter(c => {
+      if (c === handlesGroup || c === boundsRect || c === marqueeRect) return false;
+      if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors || c.dataset.marquee)) return false;
+      return true;
+    });
+  }
+  return all;
+}
+
+function buildLayerRow(el, depth, index, siblings, parent) {
+  const fill = getPaint(el, 'fill') || getPaint(el, 'stroke') || '#888';
+  const isSel = selection.includes(el);
+  const isLocked = !!el.dataset.locked;
+  const isHidden = !!el.dataset.hidden;
+  const isGroup = el.tagName === 'g';
+  const expanded = isGroup && expandedGroups.has(el);
+
+  const row = document.createElement('div');
+  row.className = 'elem-item' + (isSel ? ' active' : '') +
+    (isLocked ? ' is-locked' : '') +
+    (isHidden ? ' is-hidden' : '');
+  row.draggable = true;
+  row.style.paddingLeft = (4 + depth * 12) + 'px';
+
+  // Disclosure triangle (groups only)
+  const caret = document.createElement('button');
+  caret.type = 'button';
+  caret.className = 'layer-caret' + (isGroup ? '' : ' is-leaf');
+  if (isGroup) {
+    caret.innerHTML = expanded ? LAYER_ICONS.caretDown : LAYER_ICONS.caretRight;
+    caret.dataset.hint = expanded ? 'Collapse' : 'Expand';
+    caret.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (expandedGroups.has(el)) expandedGroups.delete(el);
+      else expandedGroups.add(el);
+      refreshElementList();
+    });
+  }
+  row.appendChild(caret);
+
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  dot.style.background = fill === 'none' ? 'transparent' : fill;
+  row.appendChild(dot);
+
+  const lbl = document.createElement('span');
+  lbl.className = 'elem-label';
+  const label = isGroup ? `group · ${el.children.length}` : el.tagName;
+  lbl.textContent = label;
+  row.appendChild(lbl);
+
+  const eye = document.createElement('button');
+  eye.type = 'button';
+  eye.className = 'layer-icon layer-eye' + (isHidden ? ' is-off' : '');
+  eye.dataset.hint = isHidden ? 'Show' : 'Hide';
+  eye.innerHTML = isHidden ? LAYER_ICONS.eyeOff : LAYER_ICONS.eyeOn;
+  eye.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    pushUndo();
+    setElHidden(el, !isHidden);
+    updateHandles();
+    refreshElementList();
+  });
+  row.appendChild(eye);
+
+  const lock = document.createElement('button');
+  lock.type = 'button';
+  lock.className = 'layer-icon layer-lock' + (isLocked ? ' is-on' : '');
+  lock.dataset.hint = isLocked ? 'Unlock' : 'Lock';
+  lock.innerHTML = isLocked ? LAYER_ICONS.lockOn : LAYER_ICONS.lockOff;
+  lock.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    pushUndo();
+    setElLocked(el, !isLocked);
+    refreshElementList();
+  });
+  row.appendChild(lock);
+
+  row.addEventListener('click', (e) => {
+    selectElement(el, e.ctrlKey || e.metaKey);
+  });
+
+  // Drag-reorder across any depth. Drop zones on each row:
+  //   - top third (or top half of leaf rows)       → before target (same parent)
+  //   - middle third of a group row                → into target as last child
+  //   - bottom third (or bottom half of leaf rows) → after target (same parent)
+  row.addEventListener('dragstart', (ev) => {
+    draggedLayerEl = el;
+    ev.dataTransfer.effectAllowed = 'move';
+    // Needed for the drop event to fire in Firefox.
+    ev.dataTransfer.setData('text/plain', 'layer');
+    row.classList.add('is-dragging');
+  });
+  row.addEventListener('dragend', () => {
+    draggedLayerEl = null;
+    row.classList.remove('is-dragging', 'drop-before', 'drop-after', 'drop-into');
+  });
+  row.addEventListener('dragover', (ev) => {
+    if (!draggedLayerEl) return;
+    // Can't drop an element into itself or a descendant.
+    if (draggedLayerEl === el || isAncestorOf(draggedLayerEl, el)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    const box = row.getBoundingClientRect();
+    const y = ev.clientY - box.top;
+    const third = box.height / 3;
+    let zone;
+    if (isGroup) {
+      if (y < third) zone = 'before';
+      else if (y > box.height - third) zone = 'after';
+      else zone = 'into';
+    } else {
+      zone = y < box.height / 2 ? 'before' : 'after';
+    }
+    row.classList.toggle('drop-before', zone === 'before');
+    row.classList.toggle('drop-after',  zone === 'after');
+    row.classList.toggle('drop-into',   zone === 'into');
+  });
+  row.addEventListener('dragleave', (ev) => {
+    if (!row.contains(ev.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into');
+  });
+  row.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    const zone = row.classList.contains('drop-into') ? 'into'
+               : row.classList.contains('drop-before') ? 'before'
+               : 'after';
+    row.classList.remove('drop-before', 'drop-after', 'drop-into');
+    if (!draggedLayerEl || draggedLayerEl === el || isAncestorOf(draggedLayerEl, el)) return;
+    pushUndo();
+    if (zone === 'into' && isGroup) {
+      el.appendChild(draggedLayerEl);
+    } else if (zone === 'before') {
+      el.parentNode.insertBefore(draggedLayerEl, el);
+    } else {
+      el.parentNode.insertBefore(draggedLayerEl, el.nextSibling);
+    }
+    // After reshuffling, children that moved under a group can leave the group
+    // empty; collapse such empties aren't auto-removed to keep scope small.
+    refreshElementList();
+    updateHandles();
+  });
+
+  elementList.appendChild(row);
+
+  // Recurse into expanded groups.
+  if (isGroup && expanded) {
+    const childList = layerChildrenOf(el);
+    childList.forEach((child, ci) => {
+      buildLayerRow(child, depth + 1, ci, childList, el);
+    });
+  }
+}
+
 function refreshElementList() {
   elementList.innerHTML = '';
-  const els = Array.from(svgCanvas.children).filter(c => {
-    if (c === handlesGroup || c === boundsRect || c === marqueeRect) return false;
-    if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors || c.dataset.marquee)) return false;
-    return true;
-  });
+  const els = layerChildrenOf(svgCanvas);
   if (els.length === 0) {
     elementList.innerHTML = '<div class="empty">No shapes yet</div>';
     return;
   }
   els.forEach((el, i) => {
-    const fill = getPaint(el, 'fill') || getPaint(el, 'stroke') || '#888';
-    const isSel = selection.includes(el);
-    const row = document.createElement('div');
-    row.className = 'elem-item' + (isSel ? ' active' : '');
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.style.background = fill === 'none' ? 'transparent' : fill;
-    row.appendChild(dot);
-    const lbl = document.createElement('span');
-    lbl.textContent = `${i + 1}  ${el.tagName}`;
-    row.appendChild(lbl);
-    row.addEventListener('click', (e) => {
-      selectElement(el, e.ctrlKey || e.metaKey);
-    });
-    elementList.appendChild(row);
+    buildLayerRow(el, 0, i, els, svgCanvas);
   });
 }
 
@@ -1445,7 +1606,7 @@ function collectGuideRefs() {
   const selSet = new Set(selection);
   let i = 0;
   for (const child of svgCanvas.children) {
-    if (child.dataset && (child.dataset.bounds || child.dataset.handles || child.dataset.guides || child.dataset.marquee || child.dataset.pathAnchors || child.dataset.bg)) continue;
+    if (child.dataset && (child.dataset.bounds || child.dataset.handles || child.dataset.guides || child.dataset.marquee || child.dataset.pathAnchors || child.dataset.bg || child.dataset.hidden)) continue;
     if (selSet.has(child)) continue;
     const b = bboxInCanvas(child);
     if (!isFinite(b.width) || !isFinite(b.height)) continue;
@@ -2127,7 +2288,7 @@ function cpCollectCanvasColors() {
   const walk = (el) => {
     if (!el) return;
     const d = el.dataset;
-    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides || d.bg || d.marquee)) return;
+    if (d && (d.bounds || d.handles || d.pathAnchors || d.guides || d.bg || d.marquee || d.hidden)) return;
     for (const attr of ['fill', 'stroke']) {
       const v = getPaint(el, attr);
       if (v && v !== 'none') {
@@ -3053,7 +3214,8 @@ svgCanvas.addEventListener('mousedown', (e) => {
     } else if (selection.length === 1) {
       const startFontSize = selection[0].tagName === 'text'
         ? (parseFloat(selection[0].getAttribute('font-size')) || 16) : null;
-      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: selection[0].getBBox(), startX: sp.x, startY: sp.y, startFontSize, x: sp.x, y: sp.y };
+      const startTransform = selection[0].getAttribute('transform') || '';
+      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: selection[0].getBBox(), startX: sp.x, startY: sp.y, startFontSize, startTransform, x: sp.x, y: sp.y };
     }
     e.preventDefault(); e.stopPropagation();
     return;
@@ -3101,6 +3263,14 @@ svgCanvas.addEventListener('mousedown', (e) => {
   if (pickTgt && pickTgt.parentNode && pickTgt.parentNode.tagName === 'text') {
     pickTgt = pickTgt.parentNode;
   }
+  // Promote clicks inside a group to the outermost <g> that's a direct child
+  // of svgCanvas, so the whole group selects/drags as a unit.
+  while (pickTgt && pickTgt.parentNode && pickTgt.parentNode !== svgCanvas) {
+    pickTgt = pickTgt.parentNode;
+  }
+  if (!pickTgt || pickTgt === svgCanvas) return;
+  // Locked elements ignore left-click — click behaves like clicking empty canvas.
+  if (pickTgt.dataset && pickTgt.dataset.locked) return;
   const addToSel = e.ctrlKey || e.metaKey;
   if (addToSel) selectElement(pickTgt, true);
   else if (!selection.includes(pickTgt)) selectElement(pickTgt);
@@ -3207,6 +3377,20 @@ window.addEventListener('mousemove', (e) => {
       }
       scale = Math.max(0.1, scale);
       el0.setAttribute('font-size', (drag.startFontSize * scale).toFixed(2));
+    } else if (el0.tagName === 'g') {
+      // Groups resize via a fresh transform built from the frozen startBBox
+      // + cumulative drag, then re-composed with the group's startTransform.
+      // Falling through to the generic transform-scale branch would fail
+      // because it treats the incremental dx/dy as cumulative.
+      const cumDx = sp.x - drag.startX;
+      const cumDy = sp.y - drag.startY;
+      const h = drag.handle;
+      const bb = drag.startBBox;
+      const scaleX = bb.width  > 0 ? (bb.width  + (h.includes('e') ? cumDx : h.includes('w') ? -cumDx : 0)) / bb.width  : 1;
+      const scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? cumDy : h.includes('n') ? -cumDy : 0)) / bb.height : 1;
+      const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+      const scaleStr = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${Math.max(0.1,scaleX).toFixed(3)},${Math.max(0.1,scaleY).toFixed(3)}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
+      el0.setAttribute('transform', drag.startTransform ? `${scaleStr} ${drag.startTransform}` : scaleStr);
     } else {
       const dx = sp.x - drag.x, dy = sp.y - drag.y;
       resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
@@ -3260,7 +3444,7 @@ window.addEventListener('mouseup', () => {
     const hits = [];
     for (const child of svgCanvas.children) {
       if (child === handlesGroup || child === boundsRect || child === marqueeRect) continue;
-      if (child.dataset && (child.dataset.bg || child.dataset.guides || child.dataset.pathAnchors || child.dataset.marquee)) continue;
+      if (child.dataset && (child.dataset.bg || child.dataset.guides || child.dataset.pathAnchors || child.dataset.marquee || child.dataset.locked || child.dataset.hidden)) continue;
       const bb = bboxInCanvas(child);
       if (!isFinite(bb.width) || !isFinite(bb.height)) continue;
       const intersects = !(bb.x + bb.width < x1 || bb.x > x2 || bb.y + bb.height < y1 || bb.y > y2);
@@ -3360,7 +3544,7 @@ window.addEventListener('keydown', (e) => {
     const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
     const dy = e.key === 'ArrowDown'  ? step : e.key === 'ArrowUp'   ? -step : 0;
     pushUndo();
-    for (const el of selection) moveElement(el, dx, dy);
+    for (const el of selection) if (!el.dataset.locked) moveElement(el, dx, dy);
     updateHandles();
     if (selection.length === 1) renderPathAnchors(selection[0]);
     return;
@@ -3390,10 +3574,14 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     if (selection.length) {
+      const targets = selection.filter(el => !el.dataset.locked);
+      if (!targets.length) return;
       e.preventDefault();
       pushUndo();
-      for (const el of selection) svgCanvas.removeChild(el);
-      clearSelection();
+      for (const el of targets) svgCanvas.removeChild(el);
+      selection = selection.filter(el => el.dataset.locked);
+      if (!selection.length) clearSelection();
+      else { updateHandles(); refreshElementList(); }
     }
   }
 
@@ -3425,15 +3613,22 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     copySelectionToClipboard();
   }
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
+    e.preventDefault();
+    if (e.shiftKey) ungroupSelection();
+    else            groupSelection();
+  }
 });
 
 // Selection transforms — flip around the union bbox center so a single
 // shape flips in place and a multi-selection mirrors as a group.
 function flipSelection(axis) {
-  if (!selection.length) return;
+  const targets = selection.filter(el => !el.dataset.locked);
+  if (!targets.length) return;
   pushUndo();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const el of selection) {
+  for (const el of targets) {
     const b = bboxInCanvas(el);
     if (b.x < minX) minX = b.x;
     if (b.y < minY) minY = b.y;
@@ -3445,7 +3640,7 @@ function flipSelection(axis) {
   const sx = axis === 'h' ? -1 : 1;
   const sy = axis === 'v' ? -1 : 1;
   const flip = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${sx},${sy}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
-  for (const el of selection) {
+  for (const el of targets) {
     const cur = el.getAttribute('transform') || '';
     el.setAttribute('transform', cur ? `${flip} ${cur}` : flip);
   }
@@ -3454,10 +3649,11 @@ function flipSelection(axis) {
 }
 
 function duplicateSelection() {
-  if (!selection.length) return;
+  const src = selection.filter(el => !el.dataset.locked);
+  if (!src.length) return;
   pushUndo();
   const clones = [];
-  for (const el of selection) {
+  for (const el of src) {
     const c = el.cloneNode(true);
     svgCanvas.insertBefore(c, handlesGroup);
     clones.push(c);
@@ -3468,30 +3664,116 @@ function duplicateSelection() {
 }
 
 function deleteSelection() {
-  if (!selection.length) return;
+  const targets = selection.filter(el => !el.dataset.locked);
+  if (!targets.length) return;
   pushUndo();
-  for (const el of selection) svgCanvas.removeChild(el);
-  clearSelection();
+  for (const el of targets) svgCanvas.removeChild(el);
+  selection = selection.filter(el => el.dataset.locked); // keep locked ones in selection
+  if (!selection.length) clearSelection();
+  else { updateHandles(); refreshElementList(); populateProps(selection[0] || null); }
 }
 
 function bringSelectionToFront() {
-  if (!selection.length) return;
+  const targets = selection.filter(el => !el.dataset.locked);
+  if (!targets.length) return;
   pushUndo();
-  for (const el of selection) svgCanvas.insertBefore(el, handlesGroup);
+  for (const el of targets) svgCanvas.insertBefore(el, handlesGroup);
   refreshElementList();
   updateHandles();
 }
 
 function sendSelectionToBack() {
-  if (!selection.length) return;
+  const targets = selection.filter(el => !el.dataset.locked);
+  if (!targets.length) return;
   pushUndo();
   const bg = svgCanvas.querySelector(':scope > [data-bg="1"]');
   const insertPoint = bg ? bg.nextSibling : svgCanvas.firstChild;
-  for (let i = 0; i < selection.length; i++) {
-    svgCanvas.insertBefore(selection[i], insertPoint);
+  for (let i = 0; i < targets.length; i++) {
+    svgCanvas.insertBefore(targets[i], insertPoint);
   }
   refreshElementList();
   updateHandles();
+}
+
+// =============================================================
+// Organisation — Group / Ungroup, Lock, Hide
+// =============================================================
+
+function groupSelection() {
+  const ordered = Array.from(svgCanvas.children).filter(c => selection.includes(c));
+  if (ordered.length < 2) return;
+  pushUndo();
+  const g = document.createElementNS(SVG_NS, 'g');
+  const topmost = ordered[ordered.length - 1];
+  svgCanvas.insertBefore(g, topmost.nextSibling);
+  for (const child of ordered) g.appendChild(child);
+  selection = [g];
+  updateHandles();
+  refreshElementList();
+  populateProps(g);
+}
+
+function ungroupSelection() {
+  const groups = selection.filter(el => el.tagName === 'g' && !el.dataset.locked);
+  if (!groups.length) return;
+  pushUndo();
+  const freed = [];
+  for (const g of groups) {
+    const cons = g.transform.baseVal.consolidate();
+    const gm = cons ? cons.matrix : null;
+    const parent = g.parentNode;
+    for (const child of Array.from(g.children)) {
+      if (gm) {
+        // Bake the group's matrix into each child so its visual position survives.
+        const ccons = child.transform.baseVal.consolidate();
+        const cm = ccons ? ccons.matrix : svgCanvas.createSVGMatrix();
+        const composed = gm.multiply(cm);
+        child.setAttribute('transform',
+          `matrix(${composed.a},${composed.b},${composed.c},${composed.d},${composed.e},${composed.f})`);
+      }
+      parent.insertBefore(child, g);
+      freed.push(child);
+    }
+    g.remove();
+  }
+  selection = freed;
+  updateHandles();
+  handlesGroup.style.display = selection.length ? '' : 'none';
+  refreshElementList();
+  if (selection.length === 1) populateProps(selection[0]);
+  else if (selection.length > 1) renderMultiSelectProps(selection.length);
+}
+
+function setElLocked(el, locked) {
+  if (locked) el.dataset.locked = '1';
+  else delete el.dataset.locked;
+}
+
+function setElHidden(el, hidden) {
+  if (hidden) {
+    el.dataset.hidden = '1';
+    el.style.display = 'none';
+  } else {
+    delete el.dataset.hidden;
+    el.style.display = '';
+  }
+}
+
+function toggleSelectionLock() {
+  if (!selection.length) return;
+  pushUndo();
+  const allLocked = selection.every(el => el.dataset.locked);
+  for (const el of selection) setElLocked(el, !allLocked);
+  refreshElementList();
+}
+
+function toggleSelectionHidden() {
+  if (!selection.length) return;
+  pushUndo();
+  const allHidden = selection.every(el => el.dataset.hidden);
+  for (const el of selection) setElHidden(el, !allHidden);
+  updateHandles();
+  refreshElementList();
 }
 
 // Right-click context menu
@@ -3515,6 +3797,16 @@ function buildCtxMenu(hasSelection) {
     ctxMenu.appendChild(d);
   };
   const hasClip = !!localClipboardMarkup;
+  const canGroup = selection.length >= 2;
+  const canUngroup = selection.some(el => el.tagName === 'g');
+  const allLocked = hasSelection && selection.every(el => el.dataset.locked);
+  const allHidden = hasSelection && selection.every(el => el.dataset.hidden);
+  mk('Group',    'Ctrl+G',       () => groupSelection(),   { disabled: !canGroup });
+  mk('Ungroup',  'Ctrl+Shift+G', () => ungroupSelection(), { disabled: !canUngroup });
+  sep();
+  mk(allLocked ? 'Unlock' : 'Lock', '',  () => toggleSelectionLock(),   { disabled: !hasSelection });
+  mk(allHidden ? 'Show'   : 'Hide', '',  () => toggleSelectionHidden(), { disabled: !hasSelection });
+  sep();
   mk('Flip horizontally', '', () => flipSelection('h'), { disabled: !hasSelection });
   mk('Flip vertically',   '', () => flipSelection('v'), { disabled: !hasSelection });
   sep();

@@ -541,24 +541,81 @@ textarea:focus { border-color: var(--bd-hi); }
   padding: 0 var(--s3);
 }
 .elem-item {
-  display: flex; align-items: center; gap: var(--s2);
+  display: flex; align-items: center; gap: var(--s1);
   padding: 3px var(--s2);
   cursor: pointer;
   border-radius: var(--r);
   font-size: 11px;
   color: var(--tx-dim);
   font-family: var(--mono);
+  position: relative;
 }
 .elem-item:hover { background: var(--bg-input); color: var(--tx); }
 .elem-item.active {
   background: var(--accent-bg);
   color: var(--accent);
 }
+.elem-item.is-hidden { opacity: 0.5; }
+.elem-item.is-dragging { opacity: 0.4; }
+.elem-item.drop-before::before,
+.elem-item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px; right: 4px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.elem-item.drop-before::before { top: -1px; }
+.elem-item.drop-after::after  { bottom: -1px; }
+.elem-item.drop-into {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--accent-bg);
+}
 .elem-item .dot {
   width: 10px; height: 10px; border-radius: 2px;
   border: 1px solid rgba(255,255,255,0.15);
   flex-shrink: 0;
 }
+.elem-item .elem-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elem-item .layer-icon {
+  width: 18px; height: 18px;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--tx-faint);
+  opacity: 0;
+  transition: opacity .1s, color .1s;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.elem-item:hover .layer-icon,
+.elem-item .layer-icon.is-on,
+.elem-item .layer-icon.is-off { opacity: 1; }
+.elem-item .layer-icon:hover { color: var(--tx); background: var(--bg-input-hi); }
+.elem-item .layer-icon.is-on  { color: var(--accent); }
+.elem-item .layer-icon.is-off { color: var(--tx-faint); }
+.elem-item .layer-icon svg { width: 14px; height: 14px; display: block; }
+.elem-item .layer-caret {
+  width: 14px; height: 14px;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--tx-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.elem-item .layer-caret:hover { color: var(--tx); }
+.elem-item .layer-caret svg { width: 10px; height: 10px; display: block; }
+.elem-item .layer-caret.is-leaf { visibility: hidden; }
 
 /* ---- Misc ---- */
 .muted { color: var(--tx-faint); font-size: 10px; }
