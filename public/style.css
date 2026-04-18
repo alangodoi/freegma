@@ -162,6 +162,11 @@ button.full { width: 100%; }
   z-index: 50;
 }
 #svgCanvas { display: block; width: 100%; height: 100%; }
+/* Draw axis-aligned rect edges on whole pixels so abutting shapes touch
+   without an anti-aliasing seam. Curves (circle/ellipse/path) still get
+   the default smooth rendering. */
+#svgCanvas rect,
+#svgCanvas path[data-rect="1"] { shape-rendering: crispEdges; }
 
 .hint {
   padding: var(--s2) var(--s4);
