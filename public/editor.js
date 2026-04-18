@@ -295,6 +295,70 @@ function setRectLike(el, patch) {
 }
 
 // =============================================================
+// Arrow — a single <path data-arrow="1"> drawn as a closed polygon.
+// Replaces the earlier <line marker-end> approach, which had rendering
+// quirks (marker / stroke-cap interactions). Geometry lives in data-*
+// attrs; the `d` is re-derived via renderArrowPath on every change.
+// =============================================================
+
+function isArrow(el) {
+  return el && el.tagName === 'path' && el.dataset && el.dataset.arrow === '1';
+}
+
+function getArrow(el) {
+  return {
+    x1: parseFloat(el.dataset.x1) || 0,
+    y1: parseFloat(el.dataset.y1) || 0,
+    x2: parseFloat(el.dataset.x2) || 0,
+    y2: parseFloat(el.dataset.y2) || 0,
+    t:  parseFloat(el.dataset.thickness) || 2,
+    hL: parseFloat(el.dataset.headLength) || 0,
+    hW: parseFloat(el.dataset.headWidth)  || 0,
+  };
+}
+
+function setArrow(el, patch) {
+  const cur = getArrow(el);
+  const next = { ...cur, ...patch };
+  el.dataset.x1 = String(next.x1);
+  el.dataset.y1 = String(next.y1);
+  el.dataset.x2 = String(next.x2);
+  el.dataset.y2 = String(next.y2);
+  el.dataset.thickness  = String(next.t);
+  el.dataset.headLength = String(next.hL);
+  el.dataset.headWidth  = String(next.hW);
+  renderArrowPath(el);
+  return el;
+}
+
+function renderArrowPath(el) {
+  const { x1, y1, x2, y2, t } = getArrow(el);
+  let { hL, hW } = getArrow(el);
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  // Clamp head length so the body never inverts when the arrow is short.
+  if (hL > L * 0.8) hL = L * 0.8;
+  const ux = dx / L, uy = dy / L;
+  const lx = -uy,    ly = ux; // perpendicular (counter-clockwise)
+  const bx = x2 - ux * hL;
+  const by = y2 - uy * hL;
+  const t2 = t / 2;
+  const h2 = Math.max(hW, t) / 2;
+  const pts = [
+    [x1 + lx * t2, y1 + ly * t2],
+    [bx + lx * t2, by + ly * t2],
+    [bx + lx * h2, by + ly * h2],
+    [x2, y2],
+    [bx - lx * h2, by - ly * h2],
+    [bx - lx * t2, by - ly * t2],
+    [x1 - lx * t2, y1 - ly * t2],
+  ];
+  const fmt = (n) => (Math.round(n * 100) / 100).toString();
+  const d = 'M ' + pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(' L ') + ' Z';
+  el.setAttribute('d', d);
+}
+
+// =============================================================
 // Canvas size
 // =============================================================
 
@@ -1980,7 +2044,7 @@ function clearPathAnchors() {
 
 function renderPathAnchors(el) {
   clearPathAnchors();
-  if (!el || el.tagName !== 'path' || isRectLike(el)) return;
+  if (!el || el.tagName !== 'path' || isRectLike(el) || isArrow(el)) return;
   const d = el.getAttribute('d') || '';
   const segs = parsePathD(d);
   if (segs.length === 0) return;
@@ -2766,6 +2830,40 @@ function populateProps(el) {
       ctrl.appendChild(miniInput('Y2', el.getAttribute('y2') || 0, { onInput: onAttr('y2') }).wrap);
       propsPanel.appendChild(row);
     }
+  } else if (isArrow(el)) {
+    const a = getArrow(el);
+    const onA = (key) => (ev) => {
+      const v = parseFloat(ev.target.value) || 0;
+      setArrow(el, { [key]: v });
+      updateHandles();
+      refreshElementList();
+    };
+    {
+      const { row, ctrl } = field('Start');
+      ctrl.appendChild(miniInput('X1', a.x1, { onInput: onA('x1'), step: 'any', field: 'x1' }).wrap);
+      ctrl.appendChild(miniInput('Y1', a.y1, { onInput: onA('y1'), step: 'any', field: 'y1' }).wrap);
+      propsPanel.appendChild(row);
+    }
+    {
+      const { row, ctrl } = field('End');
+      ctrl.appendChild(miniInput('X2', a.x2, { onInput: onA('x2'), step: 'any', field: 'x2' }).wrap);
+      ctrl.appendChild(miniInput('Y2', a.y2, { onInput: onA('y2'), step: 'any', field: 'y2' }).wrap);
+      propsPanel.appendChild(row);
+    }
+    {
+      const { row, ctrl } = field('Body');
+      ctrl.appendChild(miniInput('T', a.t, { min: 0.5, step: 'any', onInput: onA('t'), field: 't',
+        hint: 'Body thickness' }).wrap);
+      propsPanel.appendChild(row);
+    }
+    {
+      const { row, ctrl } = field('Head');
+      ctrl.appendChild(miniInput('L', a.hL, { min: 0, step: 'any', onInput: onA('hL'), field: 'hL',
+        hint: 'Arrowhead length along the line' }).wrap);
+      ctrl.appendChild(miniInput('W', a.hW, { min: 0, step: 'any', onInput: onA('hW'), field: 'hW',
+        hint: 'Arrowhead width perpendicular to the line' }).wrap);
+      propsPanel.appendChild(row);
+    }
   } else if (tag === 'path') {
     // Free-form path: anchors on the canvas + raw `d` textarea as advanced view.
     const hint = document.createElement('div');
@@ -3045,6 +3143,11 @@ function moveElement(el, dx, dy) {
     el.dataset.x = (+el.dataset.x || 0) + dx;
     el.dataset.y = (+el.dataset.y || 0) + dy;
     renderRectPath(el);
+  } else if (!hasRotate && isArrow(el)) {
+    setArrow(el, {
+      x1: (+el.dataset.x1 || 0) + dx, y1: (+el.dataset.y1 || 0) + dy,
+      x2: (+el.dataset.x2 || 0) + dx, y2: (+el.dataset.y2 || 0) + dy,
+    });
   } else if (!hasRotate && (tag === 'rect' || tag === 'image')) {
     el.setAttribute('x', parseFloat(el.getAttribute('x')||0) + dx);
     el.setAttribute('y', parseFloat(el.getAttribute('y')||0) + dy);
@@ -3168,6 +3271,17 @@ svgCanvas.addEventListener('mousedown', (e) => {
     if (tag === 'line') {
       el.setAttribute('stroke', c);
       el.setAttribute('stroke-width', Math.max(2, Math.min(currentW, currentH) * 0.012));
+    } else if (pendingShape.marker === 'arrow' && tag === 'path') {
+      // Arrow = closed polygon path. Fill with current color, initialise
+      // with sensible defaults scaled to the canvas size.
+      el.setAttribute('fill', c);
+      el.setAttribute('stroke', 'none');
+      el.dataset.arrow = '1';
+      const t  = Math.max(2, Math.min(currentW, currentH) * 0.008);
+      el.dataset.thickness  = String(t);
+      el.dataset.headLength = String(t * 3.5);
+      el.dataset.headWidth  = String(t * 2.5);
+      setArrow(el, { x1: sp.x, y1: sp.y, x2: sp.x, y2: sp.y });
     } else if (tag === 'text') {
       el.setAttribute('fill', c);
       el.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
@@ -3244,7 +3358,7 @@ svgCanvas.addEventListener('mousedown', (e) => {
 
   if (e.altKey && e.button === 0 && selection.length === 1) {
     const sel = selection[0];
-    if (sel === tgt && sel.tagName === 'path' && !isRectLike(sel)) {
+    if (sel === tgt && sel.tagName === 'path' && !isRectLike(sel) && !isArrow(sel)) {
       const sp = svgPt(e);
       pushUndo();
       if (addAnchorAt(sel, sp.x, sp.y)) {
@@ -3285,7 +3399,20 @@ window.addEventListener('mousemove', (e) => {
   const sp = svgPt(e);
 
   if (drag.mode === 'draw') {
-    setDrawGeometry(drag.el, drag.tag, drag.startX, drag.startY, sp.x, sp.y);
+    let endX = sp.x, endY = sp.y;
+    // Hold Shift while drawing a line to constrain to 0°/45°/90°/135°.
+    if ((drag.tag === 'line' || isArrow(drag.el)) && e.shiftKey) {
+      const dx = sp.x - drag.startX;
+      const dy = sp.y - drag.startY;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.01) {
+        const step = Math.PI / 4;
+        const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
+        endX = drag.startX + Math.cos(snapped) * len;
+        endY = drag.startY + Math.sin(snapped) * len;
+      }
+    }
+    setDrawGeometry(drag.el, drag.tag, drag.startX, drag.startY, endX, endY);
     return;
   }
 
@@ -3956,6 +4083,9 @@ function setDrawGeometry(el, tag, x1, y1, x2, y2) {
   } else if (tag === 'line') {
     el.setAttribute('x1', x1); el.setAttribute('y1', y1);
     el.setAttribute('x2', x2); el.setAttribute('y2', y2);
+  } else if (tag === 'path' && isArrow(el)) {
+    // Arrow tool: keep the start at the click, end follows the drag.
+    setArrow(el, { x1, y1, x2, y2 });
   } else if (tag === 'path') {
     const cx = x + w / 2, cy = y + h / 2;
     const rx = w / 2, ry = h / 2;
@@ -3971,16 +4101,17 @@ const shapes = [
   { label: 'Rect',    tag: 'rect',    icon: '▭', hint: 'Click a point or drag to size a rectangle' },
   { label: 'Circle',  tag: 'circle',  icon: '◯', hint: 'Click a point or drag to size a circle' },
   { label: 'Ellipse', tag: 'ellipse', icon: '⬭', hint: 'Click a point or drag to size an ellipse' },
-  { label: 'Line',    tag: 'line',    icon: '╱', hint: 'Click a point or drag from one end to the other' },
+  { label: 'Line',    tag: 'line',    icon: '╱', hint: 'Click a point or drag from one end to the other (hold Shift for 0°/45°/90°)' },
+  { label: 'Arrow',   tag: 'path',    icon: '→', hint: 'Drag to draw an arrow (hold Shift for 0°/45°/90°)', marker: 'arrow' },
   { label: 'Path',    tag: 'path',    icon: '✎', hint: 'Click a point or drag to size a diamond path (editable after)' },
   { label: 'Text',    tag: 'text',    icon: 'T', hint: 'Click the canvas to place text; edit content and font in the properties panel' },
 ];
 const shapeButtons = [];
-function enterDrawMode(tag, button) {
+function enterDrawMode(tag, button, opts = {}) {
   if (pendingShape && pendingShape.button === button) { exitDrawMode(); return; }
   exitDrawMode();
   clearSelection();
-  pendingShape = { tag, button };
+  pendingShape = { tag, button, marker: opts.marker || null };
   button.classList.add('active');
   if (typeof selectBtn !== 'undefined') selectBtn.classList.remove('active');
   canvasInner.style.cursor = 'crosshair';
@@ -4009,7 +4140,7 @@ for (const s of shapes) {
   btn.innerHTML = s.icon;
   btn.dataset.hint = `${s.label} — ${s.hint}`;
   btn.dataset.tag = s.tag;
-  btn.addEventListener('click', () => enterDrawMode(s.tag, btn));
+  btn.addEventListener('click', () => enterDrawMode(s.tag, btn, { marker: s.marker }));
   addShapeRow.appendChild(btn);
   shapeButtons.push(btn);
 }
