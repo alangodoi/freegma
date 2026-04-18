@@ -2555,7 +2555,7 @@ function populateProps(el) {
         step: 'any',
         field: 'font-size',
         hint: 'Font size in canvas units',
-        onInput: (ev) => { el.setAttribute('font-size', ev.target.value || 0); },
+        onInput: (ev) => { el.setAttribute('font-size', ev.target.value || 0); updateHandles(); },
       }).wrap);
       propsPanel.appendChild(row);
     }
@@ -2587,7 +2587,7 @@ function populateProps(el) {
         o.selected = true;
         sel.appendChild(o);
       }
-      sel.addEventListener('change', () => el.setAttribute('font-family', sel.value));
+      sel.addEventListener('change', () => { el.setAttribute('font-family', sel.value); updateHandles(); });
       ctrl.appendChild(sel);
       propsPanel.appendChild(row);
     }
@@ -2612,7 +2612,7 @@ function populateProps(el) {
         if (w.value === String(curW)) o.selected = true;
         sel.appendChild(o);
       }
-      sel.addEventListener('change', () => el.setAttribute('font-weight', sel.value));
+      sel.addEventListener('change', () => { el.setAttribute('font-weight', sel.value); updateHandles(); });
       ctrl.appendChild(sel);
       propsPanel.appendChild(row);
     }
@@ -2632,8 +2632,18 @@ function populateProps(el) {
         b.textContent = a.label;
         b.dataset.hint = a.hint;
         b.addEventListener('click', () => {
+          // Changing text-anchor shifts the text relative to x. Capture the
+          // current visual bbox, update the anchor, then move x so the text
+          // stays visually in place (start=left edge, middle=center, end=right).
+          const bb = bboxInCanvas(el);
           el.setAttribute('text-anchor', a.value);
+          let newX = bb.x;
+          if (a.value === 'middle') newX = bb.x + bb.width / 2;
+          else if (a.value === 'end') newX = bb.x + bb.width;
+          el.setAttribute('x', newX);
+          for (const t of el.querySelectorAll(':scope > tspan')) t.setAttribute('x', newX);
           populateProps(el);
+          updateHandles();
         });
         ctrl.appendChild(b);
       }
