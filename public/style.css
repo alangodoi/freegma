@@ -75,6 +75,48 @@ body {
   background: var(--bg-input-hi);
 }
 #topbar .gh-link svg { width: 14px; height: 14px; display: block; }
+#topbar button.gh-link {
+  cursor: pointer;
+  font-family: var(--ui);
+}
+.changelog-box { width: 600px; max-width: 92vw; }
+.changelog-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+}
+.changelog-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.changelog-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.changelog-date {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx-faint);
+  letter-spacing: 0.5px;
+}
+.changelog-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--accent);
+}
+.changelog-entry ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--tx);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.changelog-entry li { margin-bottom: 2px; }
 #topbar .gh-stars {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 6px;

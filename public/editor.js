@@ -1228,6 +1228,10 @@ function refreshIconList() {
       (live || row).focus();
     });
     row.addEventListener('dblclick', (e) => { e.preventDefault(); openRenameDialog(name); });
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openDrawingContextMenu(e, name);
+    });
     iconList.appendChild(row);
   }
 }
@@ -1336,6 +1340,11 @@ function buildLayerRow(el, depth, index, siblings, parent) {
 
   row.addEventListener('click', (e) => {
     selectElement(el, e.ctrlKey || e.metaKey);
+  });
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!selection.includes(el)) selectElement(el);
+    openContextMenu(e, el);
   });
 
   // Drag-reorder across any depth. Drop zones on each row:
@@ -3617,6 +3626,16 @@ canvasInner.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvasInner.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Suppress the browser's native right-click menu everywhere in the app so
+// right-click only opens our own menus (canvas, drawings list, layers).
+// Keep the native menu inside real text editors (input / textarea /
+// contenteditable) so users still get Paste / Undo / spell-check there.
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  e.preventDefault();
+});
 canvasInner.addEventListener('mousedown', (e) => {
   if (e.button !== 1) return; // middle mouse button
   e.preventDefault();
@@ -3958,6 +3977,32 @@ function openContextMenu(e, hitEl) {
   ctxMenu.style.top  = Math.max(4, top) + 'px';
 }
 function closeContextMenu() { ctxMenu.classList.add('hidden'); }
+
+// Sidebar drawings-list context menu — reuses the same #ctxMenu element with
+// custom actions (Rename, Remove).
+function openDrawingContextMenu(e, name) {
+  ctxMenu.innerHTML = '';
+  const mk = (label, shortcut, handler, opts = {}) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    const left = document.createElement('span'); left.textContent = label;
+    const right = document.createElement('span'); right.className = 'shortcut'; right.textContent = shortcut || '';
+    b.appendChild(left); b.appendChild(right);
+    if (opts.danger) b.classList.add('danger');
+    b.addEventListener('click', () => { closeContextMenu(); handler(); });
+    ctxMenu.appendChild(b);
+  };
+  mk('Open',    '', () => loadDrawing(name));
+  mk('Rename',  '', () => openRenameDialog(name));
+  mk('Remove',  'Del', () => removeDrawing(name), { danger: true });
+  ctxMenu.classList.remove('hidden');
+  const w = ctxMenu.offsetWidth || 180;
+  const h = ctxMenu.offsetHeight || 120;
+  const left = Math.min(e.clientX, window.innerWidth - w - 8);
+  const top  = Math.min(e.clientY, window.innerHeight - h - 8);
+  ctxMenu.style.left = Math.max(4, left) + 'px';
+  ctxMenu.style.top  = Math.max(4, top) + 'px';
+}
 document.addEventListener('mousedown', (e) => {
   if (ctxMenu.classList.contains('hidden')) return;
   if (!ctxMenu.contains(e.target)) closeContextMenu();
@@ -4307,6 +4352,97 @@ renameInput.addEventListener('keydown', (e) => {
 });
 renameDialog.addEventListener('click', (e) => {
   if (e.target === renameDialog) closeRenameDialog();
+});
+
+// Changelog dialog — opened from the top bar button, dismissed via Esc,
+// backdrop, or the Close button.
+const CHANGELOG = [
+  { date: '2026-04-18', title: 'Arrow rebuild + group polish', items: [
+    'Arrow tool now renders as a single filled polygon <path> — no more marker quirks, tight selection bbox, and properties for start / end / body thickness / head size.',
+    'Right-click inside a group selects the whole group (matches left-click).',
+  ]},
+  { date: '2026-04-18', title: 'Organisation', items: [
+    'Group / ungroup selection with Ctrl+G / Ctrl+Shift+G; groups move, resize, and rotate as a unit.',
+    'Layers panel: per-row show/hide (eye) and lock (padlock) toggles; expandable group rows with indented children; drag-and-drop reordering across groups (before / after / into).',
+    'Pan now uses the middle mouse button so right-click is free for the context menu.',
+    'Context menu with flip horizontal/vertical, duplicate, copy/paste, bring-to-front/send-to-back, group/ungroup, lock, hide.',
+    'Anti-aliasing seam between abutting rects removed (shape-rendering: crispEdges).',
+  ]},
+  { date: '2026-04-18', title: 'Text, fonts, and clipboard', items: [
+    'Moved shape tools into a Figma-style floating pill toolbar at the bottom of the canvas.',
+    'Curated Google Fonts (Inter, Roboto, Poppins, Montserrat, Oswald, Playfair Display, Lora, DM Sans, Space Mono, Fira Code) with weights 300–900.',
+    'SVG export embeds @import for the fonts in use; PNG / WebP / JPEG export fetches and inlines each woff2 as base64 so rasters carry the typeface.',
+    'Shape copy/paste within and across drawings with Ctrl+C / Ctrl+V; backed by a <svg data-freegma-clip> wrapper on the system clipboard.',
+    'Text edits (align, font size, family, weight) now refresh the selection handles so they wrap the new glyph extent.',
+    'Fixed multi-line text selection so clicking any line selects the whole text element.',
+    'Disabled browser/CDN caching on the static assets so new builds land on first reload.',
+  ]},
+  { date: '2026-04-17', title: 'Text tool, align & distribute, drag-drop', items: [
+    'Text tool with multi-line support (Enter inserts line breaks via <tspan>), font family / size / weight / alignment, and corner-drag resizes the font-size.',
+    'Align & distribute toolbar appears when 2+ shapes are selected: align L/C/R/T/M/B and distribute equal horizontal / vertical gaps.',
+    'Drag-and-drop file import — drop .svg / .png / .jpg / .webp onto the canvas.',
+    'Distance pills on alignment guides; equal-spacing detection highlights matching gaps; Alt+drag bypasses snap for sub-pixel placement.',
+    'Marquee selection on empty canvas (Ctrl-drag to add).',
+    'Resize-time alignment guides so moving handles also snap to other shapes.',
+    'Circle corner-handle resize fixed for mixed-quadrant handles.',
+    'Backspace on empty rect-like inputs no longer deletes the shape.',
+  ]},
+  { date: '2026-04-17', title: 'Dialogs, session management, branding', items: [
+    'Styled "new drawing" preset dialog with aspect-ratio tiles (icons, squares, widescreen, IG Feed/Story, X banner, YT thumb/banner, A4).',
+    'Double-click any drawing in the sidebar to rename; select + Delete to remove (styled confirm dialog).',
+    'Copy SVG button retired — SVG export covers the same use case.',
+    'Freegma "F" logo in the header and favicon (inlined SVG so production cache can\'t break it).',
+    'README + meta tags repositioned as a browser graphics tool (was "standalone SVG editor").',
+  ]},
+  { date: '2026-04-16', title: 'Eyedropper, canvas fill, image paste, WebP', items: [
+    'Custom color picker popover with SV square, hue bar, hex input, eyedropper, and an "In this drawing" palette.',
+    'Eyedropper samples colors from <image> elements (pixel read via offscreen canvas) and dominant colors of pasted images feed the palette.',
+    'Canvas Fill swatch paints the drawing background.',
+    'Paste raster images with Ctrl+V anywhere on the canvas.',
+    'Export to PNG (lossless), WebP (smaller, near-lossless), JPEG.',
+    'GitHub link in the top bar with live star count.',
+    'Social preview meta tags (Open Graph + Twitter Card) with og-image at 1200x630.',
+  ]},
+  { date: '2026-04-16', title: 'Project launched as Freegma', items: [
+    'Initial release: vector canvas with rect / circle / ellipse / line / path tools, per-corner rounded rects, undo/redo, pan/zoom, multi-drawing sidebar, Import / Export SVG.',
+    'Renamed to Freegma, added MIT license.',
+  ]},
+];
+
+const changelogDialog = document.getElementById('changelogDialog');
+const changelogBody   = document.getElementById('changelogBody');
+function openChangelog() {
+  changelogBody.innerHTML = '';
+  for (const entry of CHANGELOG) {
+    const section = document.createElement('section');
+    section.className = 'changelog-entry';
+    const head = document.createElement('header');
+    head.className = 'changelog-entry-head';
+    const date = document.createElement('span');
+    date.className = 'changelog-date';
+    date.textContent = entry.date;
+    const title = document.createElement('span');
+    title.className = 'changelog-title';
+    title.textContent = entry.title;
+    head.appendChild(date); head.appendChild(title);
+    section.appendChild(head);
+    const list = document.createElement('ul');
+    for (const item of entry.items) {
+      const li = document.createElement('li');
+      li.textContent = item;
+      list.appendChild(li);
+    }
+    section.appendChild(list);
+    changelogBody.appendChild(section);
+  }
+  changelogDialog.classList.remove('hidden');
+}
+function closeChangelog() { changelogDialog.classList.add('hidden'); }
+document.getElementById('btnChangelog').addEventListener('click', openChangelog);
+document.getElementById('changelogClose').addEventListener('click', closeChangelog);
+changelogDialog.addEventListener('click', (e) => { if (e.target === changelogDialog) closeChangelog(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !changelogDialog.classList.contains('hidden')) closeChangelog();
 });
 
 // Confirm dialog (Promise-based replacement for window.confirm)
