@@ -4458,6 +4458,10 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-04-19', title: 'Inline text editing', items: [
+    'Double-click any text on the canvas to edit it in place — font, size, color, and alignment all preserved.',
+    'Type to update the text live; newlines become <tspan>s automatically. Esc, click outside, or Ctrl/Cmd+Enter to commit.',
+  ]},
   { date: '2026-04-18', title: 'Context menus, changelog, Alt-drag duplicate', items: [
     'Alt+drag on a selection now duplicates it (Figma-style) and drags the new copies.',
     'Right-click a drawing in the left sidebar for Open / Rename / Remove.',
