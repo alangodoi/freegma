@@ -4245,6 +4245,7 @@ const NEW_PRESETS = [
   { label: 'X Banner',   w: 1500, h: 500  },
   { label: 'YT Thumb',   w: 1280, h: 720  },
   { label: 'YT Banner',  w: 2560, h: 1440 },
+  { label: 'Discord Banner', w: 680, h: 240 },
   { label: 'A4 @300dpi', w: 2480, h: 3508 },
 ];
 
