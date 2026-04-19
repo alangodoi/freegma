@@ -4103,6 +4103,105 @@ function getMultilineText(el) {
   return Array.from(tspans).map(t => t.textContent || '').join('\n');
 }
 
+// =============================================================
+// Inline text editor — double-click a <text> to type directly on canvas.
+// An HTML <textarea> overlay is positioned/styled to match the rendered
+// text; the underlying SVG text is hidden during editing and kept in sync
+// with every keystroke so changes commit live.
+// =============================================================
+
+let textEditOverlay = null;
+
+function openTextInlineEditor(textEl) {
+  closeTextInlineEditor();
+  const rect = textEl.getBoundingClientRect();
+  const canvasRect = canvasInner.getBoundingClientRect();
+  // Use the real screen CTM rather than a simple width ratio — it accounts
+  // for preserveAspectRatio and whatever zoom/pan the viewBox has. ctm.a
+  // equals ctm.d for uniform aspect scaling.
+  const ctm = svgCanvas.getScreenCTM();
+  const pxPerUnit = ctm ? Math.abs(ctm.a) : (canvasInner.clientWidth / (vbW || 1));
+  const fontSizeUser = parseFloat(textEl.getAttribute('font-size')) || 16;
+  const fontSizePx = fontSizeUser * pxPerUnit;
+
+  const ta = document.createElement('textarea');
+  ta.className = 'inline-text-edit';
+  ta.setAttribute('wrap', 'off');
+  ta.value = getMultilineText(textEl);
+
+  // Position exactly over the text. Match per-line height to rect.height /
+  // lineCount so the textarea's line-boxes coincide with the SVG glyphs.
+  const lineCount = Math.max(1, (getMultilineText(textEl) || '').split('\n').length);
+  const perLine = rect.height / lineCount;
+  ta.style.left   = (rect.left - canvasRect.left) + 'px';
+  ta.style.top    = (rect.top  - canvasRect.top ) + 'px';
+  ta.style.width  = rect.width + 'px';
+  ta.style.height = rect.height + 'px';
+  ta.style.lineHeight = perLine + 'px';
+  ta.style.fontSize = fontSizePx + 'px';
+  ta.style.lineHeight = '1.2';
+  ta.style.fontFamily = textEl.getAttribute('font-family') || 'system-ui, sans-serif';
+  ta.style.fontWeight = textEl.getAttribute('font-weight') || '400';
+  const fillPaint = getPaint(textEl, 'fill');
+  ta.style.color = fillPaint && fillPaint !== 'none' ? fillPaint : 'var(--tx)';
+  ta.style.textAlign = ({ start: 'left', middle: 'center', end: 'right' })[textEl.getAttribute('text-anchor') || 'start'];
+
+  // Hide the underlying text during editing so the glyphs don't show through.
+  const prevVisibility = textEl.style.visibility;
+  textEl.style.visibility = 'hidden';
+
+  canvasInner.appendChild(ta);
+  const outsideDown = (ev) => {
+    if (!textEditOverlay || ev.target === textEditOverlay.ta) return;
+    closeTextInlineEditor();
+  };
+  document.addEventListener('mousedown', outsideDown, true);
+  textEditOverlay = { ta, textEl, prevVisibility, outsideDown };
+  setTimeout(() => { ta.focus(); ta.select(); }, 0);
+
+  const autosize = () => {
+    // Reset both dimensions so scrollWidth/scrollHeight reflect the content,
+    // not the previously-applied size.
+    ta.style.width  = '10px';
+    ta.style.height = 'auto';
+    ta.style.width  = (ta.scrollWidth + 6) + 'px';
+    ta.style.height = ta.scrollHeight + 'px';
+  };
+  ta.addEventListener('input', () => {
+    setMultilineText(textEl, ta.value);
+    updateHandles();
+    autosize();
+  });
+  setTimeout(autosize, 0);
+  ta.addEventListener('blur', () => closeTextInlineEditor());
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeTextInlineEditor(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      closeTextInlineEditor();
+    }
+  });
+}
+
+function closeTextInlineEditor() {
+  if (!textEditOverlay) return;
+  const { ta, textEl, prevVisibility, outsideDown } = textEditOverlay;
+  textEl.style.visibility = prevVisibility || '';
+  ta.remove();
+  if (outsideDown) document.removeEventListener('mousedown', outsideDown, true);
+  textEditOverlay = null;
+  if (selection.includes(textEl)) populateProps(textEl);
+}
+
+svgCanvas.addEventListener('dblclick', (e) => {
+  let t = e.target;
+  if (t && t.parentNode && t.parentNode.tagName === 'text') t = t.parentNode;
+  if (t && t.tagName === 'text') {
+    e.preventDefault();
+    openTextInlineEditor(t);
+  }
+});
+
 function shapeDefaults(tag, px, py) {
   const cx = px != null ? px : currentW / 2;
   const cy = py != null ? py : currentH / 2;

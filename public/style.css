@@ -185,6 +185,21 @@ button.full { width: 100%; }
   cursor: crosshair;
   overflow: hidden;
 }
+.inline-text-edit {
+  position: absolute;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  outline: none;
+  color: inherit;
+  z-index: 60;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.2;
+  -webkit-font-smoothing: antialiased;
+}
+
 #canvasInner.drop-hover::after {
   content: 'Drop to import';
   position: absolute;
