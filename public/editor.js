@@ -3397,7 +3397,13 @@ svgCanvas.addEventListener('mousedown', (e) => {
   const addToSel = e.ctrlKey || e.metaKey;
   if (addToSel) selectElement(pickTgt, true);
   else if (!selection.includes(pickTgt)) selectElement(pickTgt);
-  pushUndo();
+  // Alt+drag on a selection = duplicate and drag the clones (Figma-style).
+  // duplicateSelection pushes its own undo; skip the outer pushUndo in that case.
+  if (e.altKey && !addToSel && selection.length) {
+    duplicateSelection();
+  } else {
+    pushUndo();
+  }
   const sp = svgPt(e);
   drag = { mode: 'move', startX: sp.x, startY: sp.y, appliedX: 0, appliedY: 0, x: sp.x, y: sp.y };
   e.preventDefault();
@@ -3474,10 +3480,7 @@ window.addEventListener('mousemove', (e) => {
       left: selBox.left + deltaHypoX, right: selBox.right + deltaHypoX, cx: selBox.cx + deltaHypoX,
       top: selBox.top + deltaHypoY, bottom: selBox.bottom + deltaHypoY, cy: selBox.cy + deltaHypoY,
     };
-    // Hold Alt to bypass smart-snap for precise placement (e.g. 50.1px gaps).
-    const { snapDx, snapDy, vGuides, hGuides } = e.altKey
-      ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
-      : computeSnap(hypo);
+    const { snapDx, snapDy, vGuides, hGuides } = computeSnap(hypo);
     const finalX = desiredX + snapDx;
     const finalY = desiredY + snapDy;
     const applyX = finalX - drag.appliedX;
@@ -3530,9 +3533,7 @@ window.addEventListener('mousemove', (e) => {
     } else {
       const dx = sp.x - drag.x, dy = sp.y - drag.y;
       resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
-      const snap = e.altKey
-        ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
-        : computeResizeSnap(el0, drag.handle);
+      const snap = computeResizeSnap(el0, drag.handle);
       if (snap.snapDx || snap.snapDy) {
         resizeElement(el0, snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
       }
@@ -4358,6 +4359,14 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-04-18', title: 'Context menus, changelog, Alt-drag duplicate', items: [
+    'Alt+drag on a selection now duplicates it (Figma-style) and drags the new copies.',
+    'Right-click a drawing in the left sidebar for Open / Rename / Remove.',
+    'Right-click a layer row in the right sidebar to run the full canvas menu on it (Group, Lock, Hide, Flip, Duplicate, etc.).',
+    'This Changelog button in the top bar.',
+    'Discord Banner 680×240 preset in the New drawing dialog.',
+    'Native right-click menu suppressed in app chrome (kept in text inputs so Paste / Undo / spell-check still work).',
+  ]},
   { date: '2026-04-18', title: 'Arrow rebuild + group polish', items: [
     'Arrow tool now renders as a single filled polygon <path> — no more marker quirks, tight selection bbox, and properties for start / end / body thickness / head size.',
     'Right-click inside a group selects the whole group (matches left-click).',
