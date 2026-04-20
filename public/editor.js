@@ -4873,67 +4873,47 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
-  { date: '2026-04-19', title: 'Inline text editing', items: [
-    'Double-click any text on the canvas to edit it in place — font, size, color, and alignment all preserved.',
-    'Type to update the text live; newlines become <tspan>s automatically. Esc, click outside, or Ctrl/Cmd+Enter to commit.',
+  { date: '2026-04-20', items: [
+    'Gradient fills in the color picker: Solid / Linear / Radial tabs, checker-backed preview bar with draggable stops (click to add, Del to remove), angle slider for linear, and the SV/hue/hex editor + palette + eyedropper all route to the active stop.',
+    'Hold Shift while drawing a rect or ellipse to constrain to a square / circle (line and arrow already snapped to 0°/45°/90°).',
   ]},
-  { date: '2026-04-18', title: 'Context menus, changelog, Alt-drag duplicate', items: [
-    'Alt+drag on a selection now duplicates it (Figma-style) and drags the new copies.',
-    'Right-click a drawing in the left sidebar for Open / Rename / Remove.',
-    'Right-click a layer row in the right sidebar to run the full canvas menu on it (Group, Lock, Hide, Flip, Duplicate, etc.).',
-    'This Changelog button in the top bar.',
-    'Discord Banner 680×240 preset in the New drawing dialog.',
-    'Native right-click menu suppressed in app chrome (kept in text inputs so Paste / Undo / spell-check still work).',
+  { date: '2026-04-19', items: [
+    'Double-click any text on the canvas to edit it in place — font, size, color, and alignment all preserved. Type to update live; newlines become <tspan>s automatically. Esc / click outside / Ctrl-Cmd+Enter to commit.',
+    'Paste (Ctrl+V) now drops shapes and clipboard images at the cursor rather than a fixed offset.',
   ]},
-  { date: '2026-04-18', title: 'Arrow rebuild + group polish', items: [
-    'Arrow tool now renders as a single filled polygon <path> — no more marker quirks, tight selection bbox, and properties for start / end / body thickness / head size.',
-    'Right-click inside a group selects the whole group (matches left-click).',
-  ]},
-  { date: '2026-04-18', title: 'Organisation', items: [
-    'Group / ungroup selection with Ctrl+G / Ctrl+Shift+G; groups move, resize, and rotate as a unit.',
-    'Layers panel: per-row show/hide (eye) and lock (padlock) toggles; expandable group rows with indented children; drag-and-drop reordering across groups (before / after / into).',
+  { date: '2026-04-18', items: [
+    'Arrow tool rebuilt as a single filled polygon <path> — no more marker quirks, tight selection bbox, properties for start / end / body thickness / head size.',
+    'Group / Ungroup (Ctrl+G / Ctrl+Shift+G). Groups move, resize, and rotate as one unit.',
+    'Layers panel: per-row show/hide (eye) and lock (padlock) toggles; expandable group rows with indented children; drag-and-drop across groups (before / after / into).',
+    'Right-click context menu with Group / Ungroup / Lock / Hide / Flip / Duplicate / Copy / Paste / Bring-to-front / Send-to-back; also available on drawing rows (Open / Rename / Remove) and layer rows.',
+    'Alt+drag on a selection duplicates it (Figma-style) while dragging; right-click no longer shows the browser menu in app chrome (kept in text inputs).',
     'Pan now uses the middle mouse button so right-click is free for the context menu.',
-    'Context menu with flip horizontal/vertical, duplicate, copy/paste, bring-to-front/send-to-back, group/ungroup, lock, hide.',
+    'Shape tools moved into a Figma-style floating pill toolbar at the bottom of the canvas.',
+    'Curated Google Fonts (Inter, Roboto, Poppins, Montserrat, Oswald, Playfair Display, Lora, DM Sans, Space Mono, Fira Code). SVG export embeds @import for fonts in use; PNG / WebP / JPEG inlines each woff2 as base64 so rasters carry the typeface.',
+    'Shape copy/paste across drawings with Ctrl+C / Ctrl+V; marker <svg data-freegma-clip> wrapper on the system clipboard so we only react to our own payload.',
     'Anti-aliasing seam between abutting rects removed (shape-rendering: crispEdges).',
-  ]},
-  { date: '2026-04-18', title: 'Text, fonts, and clipboard', items: [
-    'Moved shape tools into a Figma-style floating pill toolbar at the bottom of the canvas.',
-    'Curated Google Fonts (Inter, Roboto, Poppins, Montserrat, Oswald, Playfair Display, Lora, DM Sans, Space Mono, Fira Code) with weights 300–900.',
-    'SVG export embeds @import for the fonts in use; PNG / WebP / JPEG export fetches and inlines each woff2 as base64 so rasters carry the typeface.',
-    'Shape copy/paste within and across drawings with Ctrl+C / Ctrl+V; backed by a <svg data-freegma-clip> wrapper on the system clipboard.',
-    'Text edits (align, font size, family, weight) now refresh the selection handles so they wrap the new glyph extent.',
-    'Fixed multi-line text selection so clicking any line selects the whole text element.',
+    'Changelog dialog (you\'re looking at it), Discord Banner 680×240 preset.',
     'Disabled browser/CDN caching on the static assets so new builds land on first reload.',
   ]},
-  { date: '2026-04-17', title: 'Text tool, align & distribute, drag-drop', items: [
-    'Text tool with multi-line support (Enter inserts line breaks via <tspan>), font family / size / weight / alignment, and corner-drag resizes the font-size.',
-    'Align & distribute toolbar appears when 2+ shapes are selected: align L/C/R/T/M/B and distribute equal horizontal / vertical gaps.',
+  { date: '2026-04-17', items: [
+    'Text tool with multi-line (Enter inserts line breaks via <tspan>), font family / size / weight / alignment, corner-drag resizes the font-size.',
+    'Align & distribute toolbar appears when 2+ shapes selected: align L/C/R/T/M/B and distribute equal H / V gaps.',
     'Drag-and-drop file import — drop .svg / .png / .jpg / .webp onto the canvas.',
-    'Distance pills on alignment guides; equal-spacing detection highlights matching gaps; Alt+drag bypasses snap for sub-pixel placement.',
-    'Marquee selection on empty canvas (Ctrl-drag to add).',
-    'Resize-time alignment guides so moving handles also snap to other shapes.',
-    'Circle corner-handle resize fixed for mixed-quadrant handles.',
-    'Backspace on empty rect-like inputs no longer deletes the shape.',
+    'Distance pills on alignment guides; equal-spacing detection highlights matching gaps; resize-time guides; marquee selection on empty canvas (Ctrl-drag to add).',
+    'Styled "new drawing" preset dialog with aspect-ratio tiles (Icons, Squares, Widescreen, IG Feed / Story, X banner, YT Thumb / Banner, A4).',
+    'Double-click a drawing in the sidebar to rename; select + Del to remove (styled confirm dialog).',
+    'Freegma "F" logo in the header and favicon; repositioned as a browser graphics tool.',
+    'Bug fixes: circle resize on mixed-quadrant handles; Backspace on empty rect-like inputs no longer deletes the shape.',
   ]},
-  { date: '2026-04-17', title: 'Dialogs, session management, branding', items: [
-    'Styled "new drawing" preset dialog with aspect-ratio tiles (icons, squares, widescreen, IG Feed/Story, X banner, YT thumb/banner, A4).',
-    'Double-click any drawing in the sidebar to rename; select + Delete to remove (styled confirm dialog).',
-    'Copy SVG button retired — SVG export covers the same use case.',
-    'Freegma "F" logo in the header and favicon (inlined SVG so production cache can\'t break it).',
-    'README + meta tags repositioned as a browser graphics tool (was "standalone SVG editor").',
-  ]},
-  { date: '2026-04-16', title: 'Eyedropper, canvas fill, image paste, WebP', items: [
-    'Custom color picker popover with SV square, hue bar, hex input, eyedropper, and an "In this drawing" palette.',
-    'Eyedropper samples colors from <image> elements (pixel read via offscreen canvas) and dominant colors of pasted images feed the palette.',
+  { date: '2026-04-16', items: [
+    'Initial release: vector canvas with rect / circle / ellipse / line / path tools, per-corner rounded rects, undo/redo, pan/zoom, multi-drawing sidebar, Import / Export SVG.',
+    'Custom color picker popover with SV square, hue bar, hex input, eyedropper (samples pixels from pasted <image> elements via offscreen canvas), and an "In this drawing" palette that includes dominant colors from images.',
     'Canvas Fill swatch paints the drawing background.',
     'Paste raster images with Ctrl+V anywhere on the canvas.',
     'Export to PNG (lossless), WebP (smaller, near-lossless), JPEG.',
     'GitHub link in the top bar with live star count.',
-    'Social preview meta tags (Open Graph + Twitter Card) with og-image at 1200x630.',
-  ]},
-  { date: '2026-04-16', title: 'Project launched as Freegma', items: [
-    'Initial release: vector canvas with rect / circle / ellipse / line / path tools, per-corner rounded rects, undo/redo, pan/zoom, multi-drawing sidebar, Import / Export SVG.',
-    'Renamed to Freegma, added MIT license.',
+    'Social preview meta tags (Open Graph + Twitter Card) with og-image at 1200×630.',
+    'Renamed to Freegma, MIT license.',
   ]},
 ];
 
@@ -4949,10 +4929,13 @@ function openChangelog() {
     const date = document.createElement('span');
     date.className = 'changelog-date';
     date.textContent = entry.date;
-    const title = document.createElement('span');
-    title.className = 'changelog-title';
-    title.textContent = entry.title;
-    head.appendChild(date); head.appendChild(title);
+    head.appendChild(date);
+    if (entry.title) {
+      const title = document.createElement('span');
+      title.className = 'changelog-title';
+      title.textContent = entry.title;
+      head.appendChild(title);
+    }
     section.appendChild(head);
     const list = document.createElement('ul');
     for (const item of entry.items) {
