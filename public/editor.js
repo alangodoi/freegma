@@ -1262,7 +1262,8 @@ function layerChildrenOf(parent) {
   if (parent === svgCanvas) {
     return all.filter(c => {
       if (c === handlesGroup || c === boundsRect || c === marqueeRect) return false;
-      if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors || c.dataset.marquee)) return false;
+      if (c.dataset && (c.dataset.bg || c.dataset.guides || c.dataset.pathAnchors || c.dataset.marquee || c.dataset.freegmaGradients)) return false;
+      if (c.tagName === 'defs') return false;
       return true;
     });
   }
@@ -2171,6 +2172,22 @@ const colorPopover = document.createElement('div');
 colorPopover.id = 'colorPopover';
 colorPopover.className = 'hidden';
 colorPopover.innerHTML = `
+  <div class="cp-tabs">
+    <button type="button" class="cp-tab is-active" data-ft="solid">Solid</button>
+    <button type="button" class="cp-tab" data-ft="linear">Linear</button>
+    <button type="button" class="cp-tab" data-ft="radial">Radial</button>
+  </div>
+  <div class="cp-gradient hidden">
+    <div class="cp-grad-bar">
+      <div class="cp-grad-preview"></div>
+      <div class="cp-grad-stops"></div>
+    </div>
+    <div class="cp-grad-angle-row">
+      <span class="cp-grad-angle-label">Angle</span>
+      <input class="cp-grad-angle" type="range" min="0" max="359" step="1" value="90">
+      <span class="cp-grad-angle-value">90°</span>
+    </div>
+  </div>
   <div class="cp-sv">
     <div class="cp-sv-sat"></div>
     <div class="cp-sv-val"></div>
@@ -2193,16 +2210,34 @@ colorPopover.innerHTML = `
 `;
 document.body.appendChild(colorPopover);
 
-const cpSV      = colorPopover.querySelector('.cp-sv');
-const cpSat     = colorPopover.querySelector('.cp-sv-sat');
-const cpSVThumb = colorPopover.querySelector('.cp-sv-thumb');
-const cpHue     = colorPopover.querySelector('.cp-hue');
-const cpHueThumb= colorPopover.querySelector('.cp-hue-thumb');
-const cpHex     = colorPopover.querySelector('.cp-hex');
-const cpPick    = colorPopover.querySelector('.cp-pick');
-const cpPalette = colorPopover.querySelector('.cp-palette');
+const cpSV        = colorPopover.querySelector('.cp-sv');
+const cpSat       = colorPopover.querySelector('.cp-sv-sat');
+const cpSVThumb   = colorPopover.querySelector('.cp-sv-thumb');
+const cpHue       = colorPopover.querySelector('.cp-hue');
+const cpHueThumb  = colorPopover.querySelector('.cp-hue-thumb');
+const cpHex       = colorPopover.querySelector('.cp-hex');
+const cpPick      = colorPopover.querySelector('.cp-pick');
+const cpPalette   = colorPopover.querySelector('.cp-palette');
+const cpTabs      = colorPopover.querySelectorAll('.cp-tab');
+const cpGradient  = colorPopover.querySelector('.cp-gradient');
+const cpGradBar   = colorPopover.querySelector('.cp-grad-bar');
+const cpGradPrev  = colorPopover.querySelector('.cp-grad-preview');
+const cpGradStops = colorPopover.querySelector('.cp-grad-stops');
+const cpGradAngleRow   = colorPopover.querySelector('.cp-grad-angle-row');
+const cpGradAngle      = colorPopover.querySelector('.cp-grad-angle');
+const cpGradAngleValue = colorPopover.querySelector('.cp-grad-angle-value');
 
-const cpState = { h: 0, s: 0, v: 0.5, onChange: null, anchor: null };
+const cpState = {
+  h: 0, s: 0, v: 0.5,
+  onChange: null,
+  anchor: null,
+  // Fill-mode state
+  fillType: 'solid', // 'solid' | 'linear' | 'radial'
+  stops: null,       // [{ offset, color, opacity }]
+  angle: 90,         // degrees (linear only)
+  activeStop: 0,
+  gradientId: null,
+};
 
 function cpHsvToRgb(h, s, v) {
   const c = v * s;
@@ -2247,6 +2282,98 @@ function cpRgbToHex(r, g, b) {
   return '#' + [r, g, b].map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
 }
 
+// --- Gradient helpers ---
+let gradientIdCounter = 0;
+function nextGradientId() {
+  return 'freegmaGrad-' + (++gradientIdCounter);
+}
+function getGradientDefs() {
+  let defs = svgCanvas.querySelector(':scope > defs[data-freegma-gradients]');
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, 'defs');
+    defs.setAttribute('data-freegma-gradients', '1');
+    svgCanvas.insertBefore(defs, svgCanvas.firstChild);
+  }
+  return defs;
+}
+function gradientUrl(id) { return `url(#${id})`; }
+function parseGradientUrl(paint) {
+  if (!paint || typeof paint !== 'string') return null;
+  const m = paint.match(/^url\(#([^)]+)\)$/);
+  return m ? m[1] : null;
+}
+function findGradientDef(id) {
+  return svgCanvas.querySelector(`:scope > defs[data-freegma-gradients] > #${CSS.escape(id)}`);
+}
+function buildGradient(id, type, stops, angle) {
+  const defs = getGradientDefs();
+  let grad = findGradientDef(id);
+  const desiredTag = type === 'radial' ? 'radialGradient' : 'linearGradient';
+  if (grad && grad.tagName !== desiredTag) { grad.remove(); grad = null; }
+  if (!grad) {
+    grad = document.createElementNS(SVG_NS, desiredTag);
+    grad.setAttribute('id', id);
+    defs.appendChild(grad);
+  }
+  if (type === 'linear') {
+    // Angle: 0° = left-to-right; 90° = top-to-bottom (common UX convention).
+    const a = angle * Math.PI / 180;
+    const cx = 0.5, cy = 0.5;
+    const r = Math.SQRT1_2; // so the gradient axis spans the bounding box diagonally at 45°
+    const x1 = cx - Math.cos(a) * r;
+    const y1 = cy - Math.sin(a) * r;
+    const x2 = cx + Math.cos(a) * r;
+    const y2 = cy + Math.sin(a) * r;
+    grad.setAttribute('x1', x1.toFixed(4));
+    grad.setAttribute('y1', y1.toFixed(4));
+    grad.setAttribute('x2', x2.toFixed(4));
+    grad.setAttribute('y2', y2.toFixed(4));
+    grad.removeAttribute('cx'); grad.removeAttribute('cy'); grad.removeAttribute('r');
+  } else {
+    grad.setAttribute('cx', '0.5');
+    grad.setAttribute('cy', '0.5');
+    grad.setAttribute('r',  '0.5');
+    grad.removeAttribute('x1'); grad.removeAttribute('y1');
+    grad.removeAttribute('x2'); grad.removeAttribute('y2');
+  }
+  while (grad.firstChild) grad.removeChild(grad.firstChild);
+  for (const s of stops) {
+    const st = document.createElementNS(SVG_NS, 'stop');
+    st.setAttribute('offset', (Math.max(0, Math.min(1, s.offset)) * 100).toFixed(2) + '%');
+    st.setAttribute('stop-color', s.color);
+    if (s.opacity != null && s.opacity < 1) st.setAttribute('stop-opacity', String(s.opacity));
+    grad.appendChild(st);
+  }
+  return grad;
+}
+function parseGradientDef(grad) {
+  if (!grad) return null;
+  const isLinear = grad.tagName === 'linearGradient';
+  let angle = 90;
+  if (isLinear) {
+    const x1 = parseFloat(grad.getAttribute('x1')) || 0;
+    const y1 = parseFloat(grad.getAttribute('y1')) || 0;
+    const x2 = parseFloat(grad.getAttribute('x2')) || 1;
+    const y2 = parseFloat(grad.getAttribute('y2')) || 0;
+    angle = Math.round(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI);
+    if (angle < 0) angle += 360;
+  }
+  const stops = [];
+  for (const st of grad.querySelectorAll(':scope > stop')) {
+    const offRaw = st.getAttribute('offset') || '0';
+    let offset = offRaw.endsWith('%') ? parseFloat(offRaw) / 100 : parseFloat(offRaw);
+    if (!Number.isFinite(offset)) offset = 0;
+    const color = st.getAttribute('stop-color') || '#000000';
+    const opacity = parseFloat(st.getAttribute('stop-opacity'));
+    stops.push({ offset, color, opacity: Number.isFinite(opacity) ? opacity : 1 });
+  }
+  if (stops.length === 0) {
+    stops.push({ offset: 0, color: '#ffffff', opacity: 1 });
+    stops.push({ offset: 1, color: '#000000', opacity: 1 });
+  }
+  return { type: isLinear ? 'linear' : 'radial', angle, stops };
+}
+
 function cpRender({ syncHex = true } = {}) {
   const { h, s, v } = cpState;
   cpSat.style.background = `linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))`;
@@ -2262,7 +2389,18 @@ function cpRender({ syncHex = true } = {}) {
 
 function cpEmit() {
   const hex = cpRender();
-  if (cpState.onChange) cpState.onChange(hex);
+  if (cpState.fillType === 'solid') {
+    if (cpState.onChange) cpState.onChange(hex);
+    return;
+  }
+  // Gradient mode — update the active stop's color, rebuild the def, emit url.
+  if (cpState.stops && cpState.stops[cpState.activeStop]) {
+    cpState.stops[cpState.activeStop].color = hex;
+  }
+  cpApplyGradient();
+  if (cpState.onChange && cpState.gradientId) {
+    cpState.onChange(gradientUrl(cpState.gradientId));
+  }
 }
 
 function cpSetFromHex(hex, { syncHex = true } = {}) {
@@ -2274,6 +2412,98 @@ function cpSetFromHex(hex, { syncHex = true } = {}) {
   cpState.s = s; cpState.v = v;
   cpRender({ syncHex });
   return cpRgbToHex(...rgb);
+}
+
+// Rebuild the gradient definition and refresh the popover preview + stops.
+function cpApplyGradient() {
+  if (!cpState.gradientId) cpState.gradientId = nextGradientId();
+  buildGradient(cpState.gradientId, cpState.fillType, cpState.stops, cpState.angle);
+  cpRenderGradientPreview();
+  cpRenderStopHandles();
+}
+
+function cpRenderGradientPreview() {
+  if (!cpState.stops) return;
+  const parts = cpState.stops
+    .slice().sort((a, b) => a.offset - b.offset)
+    .map(s => `${s.color} ${(s.offset * 100).toFixed(2)}%`)
+    .join(', ');
+  if (cpState.fillType === 'linear') {
+    cpGradPrev.style.background = `linear-gradient(90deg, ${parts})`;
+  } else {
+    cpGradPrev.style.background = `radial-gradient(circle at 50% 50%, ${parts})`;
+  }
+}
+
+function cpRenderStopHandles() {
+  cpGradStops.innerHTML = '';
+  if (!cpState.stops) return;
+  cpState.stops.forEach((s, i) => {
+    const h = document.createElement('button');
+    h.type = 'button';
+    h.className = 'cp-grad-stop' + (i === cpState.activeStop ? ' is-active' : '');
+    h.style.left = (s.offset * 100) + '%';
+    h.style.background = s.color;
+    h.dataset.stopIndex = String(i);
+    h.title = `Stop ${i + 1}: ${s.color} (${Math.round(s.offset * 100)}%) — drag to move, Del to remove`;
+    cpGradStops.appendChild(h);
+  });
+}
+
+function cpSelectStop(i) {
+  if (i < 0 || i >= cpState.stops.length) return;
+  cpState.activeStop = i;
+  const stop = cpState.stops[i];
+  cpSetFromHex(stop.color);
+  cpRenderStopHandles();
+}
+
+function cpAddStop(offset, color) {
+  cpState.stops.push({ offset: Math.max(0, Math.min(1, offset)), color, opacity: 1 });
+  cpState.stops.sort((a, b) => a.offset - b.offset);
+  const newIdx = cpState.stops.findIndex(s => s.offset === Math.max(0, Math.min(1, offset)) && s.color === color);
+  cpState.activeStop = newIdx >= 0 ? newIdx : cpState.stops.length - 1;
+  cpApplyGradient();
+  if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+}
+
+function cpRemoveActiveStop() {
+  if (!cpState.stops || cpState.stops.length <= 2) return; // keep at least 2
+  cpState.stops.splice(cpState.activeStop, 1);
+  cpState.activeStop = Math.max(0, cpState.activeStop - 1);
+  cpSelectStop(cpState.activeStop);
+  cpApplyGradient();
+  if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+}
+
+function cpSetFillType(type) {
+  if (cpState.fillType === type) return;
+  cpState.fillType = type;
+  cpTabs.forEach(t => t.classList.toggle('is-active', t.dataset.ft === type));
+  if (type === 'solid') {
+    cpGradient.classList.add('hidden');
+    // Emit the currently-edited color as the new solid fill.
+    if (cpState.onChange) cpState.onChange(cpRender());
+    return;
+  }
+  // Entering gradient mode — seed stops from the current color if we don't
+  // already have them.
+  if (!cpState.stops) {
+    const startHex = cpRender();
+    cpState.stops = [
+      { offset: 0, color: startHex, opacity: 1 },
+      { offset: 1, color: '#000000', opacity: 1 },
+    ];
+    cpState.activeStop = 0;
+  }
+  cpGradient.classList.remove('hidden');
+  cpGradAngleRow.classList.toggle('hidden', type !== 'linear');
+  cpState.gradientId = cpState.gradientId || nextGradientId();
+  cpApplyGradient();
+  // Bring the editor into sync with the active stop.
+  const active = cpState.stops[cpState.activeStop];
+  if (active) cpSetFromHex(active.color);
+  if (cpState.onChange) cpState.onChange(gradientUrl(cpState.gradientId));
 }
 
 function cpDrag(el, handler) {
@@ -2299,9 +2529,88 @@ function cpDrag(el, handler) {
 cpDrag(cpSV,  (x, y) => { cpState.s = x; cpState.v = 1 - y; cpEmit(); });
 cpDrag(cpHue, (x)    => { cpState.h = x * 360;              cpEmit(); });
 
+// Tabs — switch between solid / linear / radial.
+cpTabs.forEach(t => t.addEventListener('click', () => cpSetFillType(t.dataset.ft)));
+
+// Angle slider for linear gradients.
+cpGradAngle.addEventListener('input', () => {
+  cpState.angle = parseFloat(cpGradAngle.value) || 0;
+  cpGradAngleValue.textContent = cpState.angle + '°';
+  if (cpState.fillType === 'linear') {
+    cpApplyGradient();
+    if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+  }
+});
+
+// Gradient bar: click a stop to select, drag to reposition, click empty
+// area to add a new stop at that offset. Delete/Backspace removes the
+// active stop (min 2 preserved).
+cpGradStops.addEventListener('mousedown', (e) => {
+  if (cpState.fillType === 'solid') return;
+  const stopBtn = e.target.closest('.cp-grad-stop');
+  if (stopBtn) {
+    e.preventDefault();
+    const idx = parseInt(stopBtn.dataset.stopIndex, 10);
+    cpSelectStop(idx);
+    // Begin drag
+    const rect = cpGradBar.getBoundingClientRect();
+    const move = (ev) => {
+      const offset = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      cpState.stops[cpState.activeStop].offset = offset;
+      cpApplyGradient();
+      if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+});
+cpGradBar.addEventListener('click', (e) => {
+  if (cpState.fillType === 'solid') return;
+  if (e.target.closest('.cp-grad-stop')) return;
+  const rect = cpGradBar.getBoundingClientRect();
+  const offset = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  // Interpolate color at that offset between the two nearest existing stops.
+  const sorted = cpState.stops.slice().sort((a, b) => a.offset - b.offset);
+  let color = sorted[0].color;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].offset >= offset) {
+      const prev = sorted[i - 1], next = sorted[i];
+      const t = (offset - prev.offset) / Math.max(0.001, next.offset - prev.offset);
+      const a = cpHexToRgb(prev.color) || [0,0,0];
+      const b = cpHexToRgb(next.color) || [0,0,0];
+      color = cpRgbToHex(a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t);
+      break;
+    }
+  }
+  cpAddStop(offset, color);
+  // Bring the editor to the newly-added stop.
+  const active = cpState.stops[cpState.activeStop];
+  if (active) cpSetFromHex(active.color);
+});
+document.addEventListener('keydown', (e) => {
+  if (colorPopover.classList.contains('hidden')) return;
+  if (cpState.fillType === 'solid') return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    cpRemoveActiveStop();
+  }
+});
+
 cpHex.addEventListener('input', () => {
   const normalized = cpSetFromHex(cpHex.value, { syncHex: false });
-  if (normalized && cpState.onChange) cpState.onChange(normalized);
+  if (!normalized) return;
+  if (cpState.fillType === 'solid') {
+    if (cpState.onChange) cpState.onChange(normalized);
+  } else {
+    cpState.stops[cpState.activeStop].color = normalized;
+    cpApplyGradient();
+    if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+  }
 });
 
 // Element-based eyedropper: click any shape on the canvas to grab its paint.
@@ -2314,11 +2623,36 @@ function startCanvasPick() {
   const anchor = cpState.anchor;
   const onChange = cpState.onChange;
   const originalHex = cpRender();
+  // Capture the gradient context so we can re-open the picker with the
+  // stop-updated gradient instead of defaulting back to solid.
+  const wasGradient = cpState.fillType !== 'solid';
+  const gradSnapshot = wasGradient ? {
+    type: cpState.fillType,
+    stops: cpState.stops.map(s => ({ ...s })),
+    angle: cpState.angle,
+    activeStop: cpState.activeStop,
+    gradientId: cpState.gradientId,
+  } : null;
   closeColorPicker();
   document.body.classList.add('cp-picking');
 
   const reopen = (hex) => {
-    if (anchor) openColorPicker(anchor, { value: hex, onChange });
+    if (!anchor) return;
+    if (wasGradient && hex && hex !== originalHex) {
+      // Restore gradient mode with the picked color in the active stop.
+      gradSnapshot.stops[gradSnapshot.activeStop].color = hex;
+      Object.assign(cpState, {
+        fillType: gradSnapshot.type,
+        stops: gradSnapshot.stops,
+        angle: gradSnapshot.angle,
+        activeStop: gradSnapshot.activeStop,
+        gradientId: gradSnapshot.gradientId,
+      });
+      cpApplyGradient();
+      openColorPicker(anchor, { value: gradientUrl(gradSnapshot.gradientId), onChange });
+    } else {
+      openColorPicker(anchor, { value: hex, onChange });
+    }
   };
   const cleanup = () => {
     document.body.classList.remove('cp-picking');
@@ -2343,7 +2677,16 @@ function startCanvasPick() {
         t = t.parentElement;
       }
     }
-    if (picked && onChange) onChange(picked);
+    if (picked && onChange) {
+      if (wasGradient) {
+        // Apply picked to active stop, emit the gradient url.
+        gradSnapshot.stops[gradSnapshot.activeStop].color = picked;
+        buildGradient(gradSnapshot.gradientId, gradSnapshot.type, gradSnapshot.stops, gradSnapshot.angle);
+        onChange(gradientUrl(gradSnapshot.gradientId));
+      } else {
+        onChange(picked);
+      }
+    }
     reopen(picked || originalHex);
   };
   const onKey = (e) => {
@@ -2525,7 +2868,14 @@ function cpRenderPalette() {
     sw.title = c;
     sw.addEventListener('click', () => {
       const hex = cpSetFromHex(c);
-      if (hex && cpState.onChange) cpState.onChange(hex);
+      if (!hex) return;
+      if (cpState.fillType === 'solid') {
+        if (cpState.onChange) cpState.onChange(hex);
+      } else {
+        cpState.stops[cpState.activeStop].color = hex;
+        cpApplyGradient();
+        if (cpState.onChange && cpState.gradientId) cpState.onChange(gradientUrl(cpState.gradientId));
+      }
     });
     cpPalette.appendChild(sw);
   }
@@ -2534,7 +2884,33 @@ function cpRenderPalette() {
 function openColorPicker(anchorEl, { value, onChange }) {
   cpState.anchor = anchorEl;
   cpState.onChange = onChange;
-  cpSetFromHex(value || '#888888');
+  // Detect if the incoming fill is a gradient (url(#id)) and set the
+  // popover into gradient mode; otherwise fall back to solid.
+  const gradId = parseGradientUrl(value);
+  const grad = gradId ? findGradientDef(gradId) : null;
+  if (grad) {
+    const parsed = parseGradientDef(grad);
+    cpState.fillType = parsed.type;
+    cpState.stops = parsed.stops.map(s => ({ ...s }));
+    cpState.angle = parsed.angle;
+    cpState.activeStop = 0;
+    cpState.gradientId = gradId;
+    cpTabs.forEach(t => t.classList.toggle('is-active', t.dataset.ft === parsed.type));
+    cpGradient.classList.remove('hidden');
+    cpGradAngleRow.classList.toggle('hidden', parsed.type !== 'linear');
+    cpGradAngle.value = String(parsed.angle);
+    cpGradAngleValue.textContent = parsed.angle + '°';
+    cpSetFromHex(parsed.stops[0].color);
+    cpRenderGradientPreview();
+    cpRenderStopHandles();
+  } else {
+    cpState.fillType = 'solid';
+    cpState.stops = null;
+    cpState.gradientId = null;
+    cpTabs.forEach(t => t.classList.toggle('is-active', t.dataset.ft === 'solid'));
+    cpGradient.classList.add('hidden');
+    cpSetFromHex(value || '#888888');
+  }
   cpRenderPalette();
   colorPopover.classList.remove('hidden');
   // Measure after reveal so offsetHeight is accurate.
