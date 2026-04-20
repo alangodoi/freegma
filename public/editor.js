@@ -3422,16 +3422,26 @@ window.addEventListener('mousemove', (e) => {
 
   if (drag.mode === 'draw') {
     let endX = sp.x, endY = sp.y;
-    // Hold Shift while drawing a line to constrain to 0°/45°/90°/135°.
-    if ((drag.tag === 'line' || isArrow(drag.el)) && e.shiftKey) {
-      const dx = sp.x - drag.startX;
-      const dy = sp.y - drag.startY;
-      const len = Math.hypot(dx, dy);
-      if (len > 0.01) {
-        const step = Math.PI / 4;
-        const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
-        endX = drag.startX + Math.cos(snapped) * len;
-        endY = drag.startY + Math.sin(snapped) * len;
+    if (e.shiftKey) {
+      // Shift on line/arrow — constrain to 0°/45°/90°/135°.
+      if (drag.tag === 'line' || isArrow(drag.el)) {
+        const dx = sp.x - drag.startX;
+        const dy = sp.y - drag.startY;
+        const len = Math.hypot(dx, dy);
+        if (len > 0.01) {
+          const step = Math.PI / 4;
+          const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
+          endX = drag.startX + Math.cos(snapped) * len;
+          endY = drag.startY + Math.sin(snapped) * len;
+        }
+      // Shift on rect/ellipse — constrain to a square / circle along the
+      // longer axis of the drag so the cursor stays on the corner.
+      } else if (drag.tag === 'rect' || drag.tag === 'ellipse') {
+        const dx = sp.x - drag.startX;
+        const dy = sp.y - drag.startY;
+        const side = Math.max(Math.abs(dx), Math.abs(dy));
+        endX = drag.startX + (dx >= 0 ? side : -side);
+        endY = drag.startY + (dy >= 0 ? side : -side);
       }
     }
     setDrawGeometry(drag.el, drag.tag, drag.startX, drag.startY, endX, endY);
