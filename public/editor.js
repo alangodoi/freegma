@@ -3258,6 +3258,13 @@ function svgPt(e) {
   return pt.matrixTransform(svgCanvas.getScreenCTM().inverse());
 }
 
+// Last known cursor position in SVG coordinates, used by paste to drop
+// shapes at the cursor instead of a fixed offset from the originals.
+let lastCursorSvgPt = null;
+canvasInner.addEventListener('mousemove', (e) => {
+  lastCursorSvgPt = svgPt(e);
+});
+
 svgCanvas.addEventListener('mousedown', (e) => {
   // Only left-click drives select / draw / marquee / resize.
   // Middle button is pan (handled on canvasInner); right button opens the
@@ -4059,9 +4066,31 @@ function pasteClipboardMarkup(markup) {
     svgCanvas.insertBefore(node, handlesGroup);
     pasted.push(node);
   }
-  // Nudge pasted shapes off their originals so they don't stack invisibly.
-  const step = Math.max(6, Math.min(currentW, currentH) * 0.02);
-  for (const el of pasted) moveElement(el, step, step);
+  // Position pasted shapes at the cursor when possible — measure the union
+  // bbox of the paste and translate so its centre lands on the last known
+  // cursor position. Falls back to a small diagonal nudge so the paste
+  // never lands exactly on top of the originals.
+  let dx, dy;
+  if (lastCursorSvgPt) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const el of pasted) {
+      const bb = bboxInCanvas(el);
+      if (!isFinite(bb.width) || !isFinite(bb.height)) continue;
+      if (bb.x < minX) minX = bb.x;
+      if (bb.y < minY) minY = bb.y;
+      if (bb.x + bb.width  > maxX) maxX = bb.x + bb.width;
+      if (bb.y + bb.height > maxY) maxY = bb.y + bb.height;
+    }
+    if (isFinite(minX)) {
+      dx = lastCursorSvgPt.x - (minX + maxX) / 2;
+      dy = lastCursorSvgPt.y - (minY + maxY) / 2;
+    }
+  }
+  if (dx == null) {
+    const step = Math.max(6, Math.min(currentW, currentH) * 0.02);
+    dx = step; dy = step;
+  }
+  for (const el of pasted) moveElement(el, dx, dy);
   persistCurrent();
   refreshElementList();
   selection = pasted;
@@ -4737,7 +4766,11 @@ window.addEventListener('paste', (e) => {
       if (!file) continue;
       e.preventDefault();
       const reader = new FileReader();
-      reader.onload = () => addImageToCanvas(String(reader.result));
+      reader.onload = () => addImageToCanvas(
+        String(reader.result),
+        lastCursorSvgPt ? lastCursorSvgPt.x : undefined,
+        lastCursorSvgPt ? lastCursorSvgPt.y : undefined,
+      );
       reader.readAsDataURL(file);
       return;
     }
