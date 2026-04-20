@@ -2346,6 +2346,95 @@ function buildGradient(id, type, stops, angle) {
   }
   return grad;
 }
+// --- Effects (drop shadow + gaussian blur) ---
+let effectIdCounter = 0;
+function nextEffectId() { return 'freegmaFx-' + (++effectIdCounter); }
+function getEffectsDefs() {
+  let defs = svgCanvas.querySelector(':scope > defs[data-freegma-effects]');
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, 'defs');
+    defs.setAttribute('data-freegma-effects', '1');
+    svgCanvas.insertBefore(defs, svgCanvas.firstChild);
+  }
+  return defs;
+}
+function getEffectFilterDef(el) {
+  const m = (el.getAttribute('filter') || '').match(/^url\(#([^)]+)\)$/);
+  if (!m) return null;
+  return getEffectsDefs().querySelector('#' + CSS.escape(m[1]));
+}
+function parseEffectsFromElement(el) {
+  const f = getEffectFilterDef(el);
+  if (!f) return { shadow: null, blur: null };
+  const shadow = f.dataset.shadowX != null ? {
+    x: +f.dataset.shadowX || 0,
+    y: +f.dataset.shadowY || 0,
+    blur: +f.dataset.shadowBlur || 0,
+    color: f.dataset.shadowColor || '#000000',
+    opacity: f.dataset.shadowOpacity != null ? +f.dataset.shadowOpacity : 0.5,
+  } : null;
+  const blur = f.dataset.blurRadius != null ? { radius: +f.dataset.blurRadius } : null;
+  return { shadow, blur };
+}
+function setElementEffects(el, { shadow, blur }) {
+  if (!shadow && !blur) {
+    const f = getEffectFilterDef(el);
+    if (f) f.remove();
+    el.removeAttribute('filter');
+    return;
+  }
+  let f = getEffectFilterDef(el);
+  let id;
+  if (f) {
+    id = f.getAttribute('id');
+  } else {
+    id = nextEffectId();
+    f = document.createElementNS(SVG_NS, 'filter');
+    f.setAttribute('id', id);
+    getEffectsDefs().appendChild(f);
+  }
+  // Expand the filter region so shadow/blur spill doesn't clip.
+  f.setAttribute('x', '-50%');
+  f.setAttribute('y', '-50%');
+  f.setAttribute('width',  '200%');
+  f.setAttribute('height', '200%');
+  // Clear previous state.
+  while (f.firstChild) f.removeChild(f.firstChild);
+  delete f.dataset.shadowX; delete f.dataset.shadowY; delete f.dataset.shadowBlur;
+  delete f.dataset.shadowColor; delete f.dataset.shadowOpacity;
+  delete f.dataset.blurRadius;
+
+  const ns = SVG_NS;
+  const mk = (tag, attrs) => {
+    const e = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+    return e;
+  };
+  // Source (possibly blurred) used as the non-shadow pass.
+  let sourceRef = 'SourceGraphic';
+  if (blur && blur.radius > 0) {
+    f.appendChild(mk('feGaussianBlur', { in: 'SourceGraphic', stdDeviation: blur.radius, result: 'blurred' }));
+    sourceRef = 'blurred';
+    f.dataset.blurRadius = String(blur.radius);
+  }
+  if (shadow) {
+    f.appendChild(mk('feGaussianBlur', { in: 'SourceAlpha', stdDeviation: Math.max(0, shadow.blur), result: 'sb1' }));
+    f.appendChild(mk('feOffset', { in: 'sb1', dx: shadow.x, dy: shadow.y, result: 'sb2' }));
+    f.appendChild(mk('feFlood', { 'flood-color': shadow.color, 'flood-opacity': shadow.opacity, result: 'sc' }));
+    f.appendChild(mk('feComposite', { in: 'sc', in2: 'sb2', operator: 'in', result: 'shadow' }));
+    const merge = mk('feMerge', {});
+    merge.appendChild(mk('feMergeNode', { in: 'shadow' }));
+    merge.appendChild(mk('feMergeNode', { in: sourceRef }));
+    f.appendChild(merge);
+    f.dataset.shadowX = String(shadow.x);
+    f.dataset.shadowY = String(shadow.y);
+    f.dataset.shadowBlur = String(shadow.blur);
+    f.dataset.shadowColor = shadow.color;
+    f.dataset.shadowOpacity = String(shadow.opacity);
+  }
+  el.setAttribute('filter', `url(#${id})`);
+}
+
 function parseGradientDef(grad) {
   if (!grad) return null;
   const isLinear = grad.tagName === 'linearGradient';
@@ -3085,6 +3174,132 @@ function populateProps(el) {
     ctrl.appendChild(r);
     ctrl.appendChild(v);
     propsPanel.appendChild(row);
+  }
+
+  // ---- Effects (drop shadow + gaussian blur) ----
+  {
+    const section = document.createElement('div');
+    section.className = 'fx-section';
+    const heading = document.createElement('div');
+    heading.className = 'fx-heading';
+    heading.textContent = 'Effects';
+    section.appendChild(heading);
+    const ctrl = document.createElement('div');
+    ctrl.className = 'fx-body';
+    section.appendChild(ctrl);
+    const current = parseEffectsFromElement(el);
+    let shadow = current.shadow;
+    let blur   = current.blur;
+    const apply = () => { setElementEffects(el, { shadow, blur }); updateHandles(); };
+
+    // --- Shadow block ---
+    const shadowWrap = document.createElement('div');
+    shadowWrap.className = 'fx-row';
+    const shadowBtn = document.createElement('button');
+    shadowBtn.type = 'button';
+    shadowBtn.className = 'fx-toggle' + (shadow ? ' is-on' : '');
+    shadowBtn.textContent = 'Shadow';
+    shadowBtn.dataset.hint = 'Toggle drop shadow';
+    const shadowDetails = document.createElement('div');
+    shadowDetails.className = 'fx-details' + (shadow ? '' : ' hidden');
+    const renderShadowUI = () => {
+      shadowDetails.innerHTML = '';
+      if (!shadow) return;
+      const r1 = document.createElement('div');
+      r1.className = 'fx-row-inner';
+      for (const [lbl, key, min] of [['X', 'x', -200], ['Y', 'y', -200], ['Blur', 'blur', 0]]) {
+        const mini = miniInput(lbl, shadow[key], {
+          min, step: 'any',
+          hint: `Shadow ${lbl.toLowerCase()}`,
+          onInput: (ev) => { shadow[key] = parseFloat(ev.target.value) || 0; apply(); },
+        });
+        r1.appendChild(mini.wrap);
+      }
+      shadowDetails.appendChild(r1);
+      const r2 = document.createElement('div');
+      r2.className = 'fx-row-inner';
+      const sw = makeSwatchButton({
+        value: shadow.color,
+        hint: 'Shadow color',
+        onChange: (hex) => { shadow.color = hex; apply(); },
+      });
+      r2.appendChild(sw);
+      const rng = document.createElement('input');
+      rng.type = 'range'; rng.min = 0; rng.max = 1; rng.step = 0.05;
+      rng.value = String(shadow.opacity);
+      rng.style.flex = '1';
+      rng.dataset.hint = 'Shadow opacity';
+      const val = document.createElement('span');
+      val.className = 'muted';
+      val.style.cssText = 'min-width:28px;text-align:right;font-family:var(--mono)';
+      val.textContent = (+rng.value).toFixed(2);
+      rng.addEventListener('input', () => {
+        shadow.opacity = parseFloat(rng.value);
+        val.textContent = shadow.opacity.toFixed(2);
+        apply();
+      });
+      r2.appendChild(rng);
+      r2.appendChild(val);
+      shadowDetails.appendChild(r2);
+    };
+    shadowBtn.addEventListener('click', () => {
+      shadow = shadow ? null : { x: 2, y: 4, blur: 6, color: '#000000', opacity: 0.5 };
+      shadowBtn.classList.toggle('is-on', !!shadow);
+      shadowDetails.classList.toggle('hidden', !shadow);
+      renderShadowUI();
+      apply();
+    });
+    shadowWrap.appendChild(shadowBtn);
+    shadowWrap.appendChild(shadowDetails);
+    ctrl.appendChild(shadowWrap);
+
+    // --- Blur block ---
+    const blurWrap = document.createElement('div');
+    blurWrap.className = 'fx-row';
+    const blurBtn = document.createElement('button');
+    blurBtn.type = 'button';
+    blurBtn.className = 'fx-toggle' + (blur ? ' is-on' : '');
+    blurBtn.textContent = 'Blur';
+    blurBtn.dataset.hint = 'Toggle gaussian blur';
+    const blurDetails = document.createElement('div');
+    blurDetails.className = 'fx-details' + (blur ? '' : ' hidden');
+    const renderBlurUI = () => {
+      blurDetails.innerHTML = '';
+      if (!blur) return;
+      const r = document.createElement('div');
+      r.className = 'fx-row-inner';
+      const rng = document.createElement('input');
+      rng.type = 'range'; rng.min = 0; rng.max = 30; rng.step = 0.5;
+      rng.value = String(blur.radius);
+      rng.style.flex = '1';
+      rng.dataset.hint = 'Blur radius';
+      const val = document.createElement('span');
+      val.className = 'muted';
+      val.style.cssText = 'min-width:34px;text-align:right;font-family:var(--mono)';
+      val.textContent = (+rng.value).toFixed(1) + 'px';
+      rng.addEventListener('input', () => {
+        blur.radius = parseFloat(rng.value);
+        val.textContent = blur.radius.toFixed(1) + 'px';
+        apply();
+      });
+      r.appendChild(rng);
+      r.appendChild(val);
+      blurDetails.appendChild(r);
+    };
+    blurBtn.addEventListener('click', () => {
+      blur = blur ? null : { radius: 3 };
+      blurBtn.classList.toggle('is-on', !!blur);
+      blurDetails.classList.toggle('hidden', !blur);
+      renderBlurUI();
+      apply();
+    });
+    blurWrap.appendChild(blurBtn);
+    blurWrap.appendChild(blurDetails);
+    ctrl.appendChild(blurWrap);
+
+    renderShadowUI();
+    renderBlurUI();
+    propsPanel.appendChild(section);
   }
 
   // ---- Geometry ----
@@ -4874,6 +5089,7 @@ renameDialog.addEventListener('click', (e) => {
 // backdrop, or the Close button.
 const CHANGELOG = [
   { date: '2026-04-20', items: [
+    'Effects section in the properties panel: toggle a drop shadow (X / Y offset, blur, color, opacity) and gaussian blur (radius) per shape. Rendered via SVG <filter>, so exports carry the effect faithfully.',
     'Gradient fills in the color picker: Solid / Linear / Radial tabs, checker-backed preview bar with draggable stops (click to add, Del to remove), angle slider for linear, and the SV/hue/hex editor + palette + eyedropper all route to the active stop.',
     'Hold Shift while drawing a rect or ellipse to constrain to a square / circle (line and arrow already snapped to 0°/45°/90°).',
   ]},
