@@ -4360,6 +4360,23 @@ window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && Date.now() - lastFormInputAt < 250) return;
 
+  // `?` — open the keyboard shortcut overlay.
+  if (e.key === '?') { e.preventDefault(); openShortcuts(); return; }
+
+  // Figma-style tool shortcuts: V select, R rect, O ellipse, C circle,
+  // L line, A arrow, P path, T text. No modifier keys.
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'v') { e.preventDefault(); exitDrawMode(); return; }
+    const toolMap = { r: 'Rect', o: 'Ellipse', c: 'Circle', l: 'Line', a: 'Arrow', p: 'Path', t: 'Text' };
+    const label = toolMap[k];
+    if (label) {
+      const idx = shapes.findIndex(s => s.label === label);
+      const btn = shapeButtons[idx];
+      if (btn) { e.preventDefault(); enterDrawMode(shapes[idx].tag, btn, { marker: shapes[idx].marker }); return; }
+    }
+  }
+
   if (e.key === 'Escape') {
     if (pendingShape) { e.preventDefault(); exitDrawMode(); return; }
     if (selectedAnchor) {
@@ -5167,6 +5184,7 @@ renameDialog.addEventListener('click', (e) => {
 const CHANGELOG = [
   { date: '2026-04-21', items: [
     'Auto-save to localStorage — drawings and the last-open tab survive reload / tab close. Boot restores from storage before falling back to the built-in starter icons; a beforeunload flush keeps rapid tab-closes from dropping the latest edit.',
+    'Keyboard shortcut overlay (press "?" or click the keyboard icon in the top bar) with Figma-style tool shortcuts: V select, R rect, O ellipse, C circle, L line, A arrow, P path, T text.',
   ]},
   { date: '2026-04-20', items: [
     'Effects section in the properties panel: toggle a drop shadow (X / Y offset, blur, color, opacity) and gaussian blur (radius) per shape. Rendered via SVG <filter>, so exports carry the effect faithfully.',
@@ -5212,6 +5230,104 @@ const CHANGELOG = [
     'Renamed to Freegma, MIT license.',
   ]},
 ];
+
+// Keyboard shortcuts dialog, opened with `?` or from the top bar.
+const SHORTCUTS = [
+  { group: 'Tools', items: [
+    { keys: ['V'],  label: 'Select (cancel tool)' },
+    { keys: ['R'],  label: 'Rectangle' },
+    { keys: ['O'],  label: 'Ellipse' },
+    { keys: ['C'],  label: 'Circle' },
+    { keys: ['L'],  label: 'Line' },
+    { keys: ['A'],  label: 'Arrow' },
+    { keys: ['P'],  label: 'Pen / Path' },
+    { keys: ['T'],  label: 'Text' },
+  ]},
+  { group: 'View', items: [
+    { keys: ['Scroll'],         label: 'Zoom at cursor' },
+    { keys: ['Middle-drag'],    label: 'Pan the canvas' },
+  ]},
+  { group: 'Edit', items: [
+    { keys: ['⌘', 'Z'],         label: 'Undo' },
+    { keys: ['⌘', 'Shift', 'Z'],label: 'Redo' },
+    { keys: ['⌘', 'D'],         label: 'Duplicate in place' },
+    { keys: ['Alt-drag'],       label: 'Duplicate and drag' },
+    { keys: ['⌘', 'C'],         label: 'Copy' },
+    { keys: ['⌘', 'V'],         label: 'Paste at cursor' },
+    { keys: ['Del'],            label: 'Delete selection' },
+  ]},
+  { group: 'Selection', items: [
+    { keys: ['Click'],          label: 'Select shape' },
+    { keys: ['⌘', 'Click'],     label: 'Add / remove from selection' },
+    { keys: ['Drag'],           label: 'Marquee (empty canvas)' },
+    { keys: ['Esc'],            label: 'Deselect / cancel' },
+    { keys: ['Dbl-click'],      label: 'Edit text / rename' },
+  ]},
+  { group: 'Arrange', items: [
+    { keys: ['⌘', 'G'],         label: 'Group' },
+    { keys: ['⌘', 'Shift', 'G'],label: 'Ungroup' },
+    { keys: ['Arrows'],         label: 'Nudge 1 px' },
+    { keys: ['Shift', 'Arrows'],label: 'Nudge 10 px' },
+  ]},
+  { group: 'Drawing', items: [
+    { keys: ['Shift-drag'],     label: '45° line / square / circle' },
+    { keys: ['Alt-click'],      label: 'Add path anchor' },
+    { keys: ['Del'],            label: 'Remove path anchor' },
+  ]},
+  { group: 'General', items: [
+    { keys: ['?'],              label: 'Show this overlay' },
+    { keys: ['Right-click'],    label: 'Context menu' },
+  ]},
+];
+
+const shortcutsDialog = document.getElementById('shortcutsDialog');
+const shortcutsBody   = document.getElementById('shortcutsBody');
+function openShortcuts() {
+  if (!shortcutsBody) return;
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  shortcutsBody.innerHTML = '';
+  for (const group of SHORTCUTS) {
+    const col = document.createElement('div');
+    col.className = 'shortcuts-group';
+    const h = document.createElement('div');
+    h.className = 'shortcuts-title';
+    h.textContent = group.group;
+    col.appendChild(h);
+    for (const row of group.items) {
+      const r = document.createElement('div');
+      r.className = 'shortcut-row';
+      const lbl = document.createElement('span');
+      lbl.className = 'label';
+      lbl.textContent = row.label;
+      const keys = document.createElement('span');
+      keys.className = 'keys';
+      row.keys.forEach((k, i) => {
+        if (i > 0) {
+          const plus = document.createElement('span');
+          plus.className = 'plus';
+          plus.textContent = '+';
+          keys.appendChild(plus);
+        }
+        const kbd = document.createElement('kbd');
+        // Render the Cmd/Ctrl glyph per-platform.
+        kbd.textContent = k === '⌘' ? (isMac ? '⌘' : 'Ctrl') : k;
+        keys.appendChild(kbd);
+      });
+      r.appendChild(lbl);
+      r.appendChild(keys);
+      col.appendChild(r);
+    }
+    shortcutsBody.appendChild(col);
+  }
+  shortcutsDialog.classList.remove('hidden');
+}
+function closeShortcuts() { shortcutsDialog.classList.add('hidden'); }
+document.getElementById('shortcutsClose').addEventListener('click', closeShortcuts);
+document.getElementById('btnShortcuts').addEventListener('click', openShortcuts);
+shortcutsDialog.addEventListener('click', (e) => { if (e.target === shortcutsDialog) closeShortcuts(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !shortcutsDialog.classList.contains('hidden')) closeShortcuts();
+});
 
 const changelogDialog = document.getElementById('changelogDialog');
 const changelogBody   = document.getElementById('changelogBody');

@@ -79,6 +79,66 @@ body {
   cursor: pointer;
   font-family: var(--ui);
 }
+#topbar .gh-link.icon-only { padding: 0 8px; }
+#topbar .gh-link.icon-only svg { width: 18px; height: 14px; }
+.dialog-box.shortcuts-box { width: 1040px; max-width: 96vw; }
+.shortcuts-body {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s4);
+  padding: var(--s2) 0;
+}
+.shortcuts-group {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px var(--s3);
+  align-items: center;
+  align-content: start;
+}
+.shortcuts-title {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.shortcut-row {
+  display: contents;
+}
+.shortcut-row .label {
+  color: var(--tx);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shortcut-row .keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  justify-self: end;
+}
+.shortcut-row .keys kbd {
+  background: var(--bg-input);
+  border: 1px solid var(--bd);
+  border-bottom-color: rgba(0,0,0,0.4);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--tx);
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.2;
+}
+.shortcut-row .plus {
+  color: var(--tx-faint);
+  font-size: 10px;
+}
+
 .changelog-box { width: 600px; max-width: 92vw; }
 .changelog-body {
   max-height: 60vh;
