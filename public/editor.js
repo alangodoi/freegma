@@ -854,6 +854,17 @@ function setCanvasSize(w, h, { persist = true } = {}) {
 // =============================================================
 
 async function loadAll() {
+  if (loadFromLocalStorage()) {
+    // Restore the saved session: load the last-open drawing, or the first
+    // if the saved currentId is gone.
+    const target = (currentId && drawings[currentId]) ? currentId : Object.keys(drawings).sort()[0];
+    // loadDrawing short-circuits if id === currentId, so temporarily null the
+    // module variable to force a full re-render.
+    currentId = null;
+    loadDrawing(target);
+    refreshIconList();
+    return;
+  }
   try {
     const def = await fetch('/api/defaults').then(r => r.json());
     for (const [name, svg] of Object.entries(def)) {
@@ -1054,6 +1065,7 @@ async function removeDrawing(name) {
   } else {
     refreshIconList();
   }
+  scheduleSave();
 }
 
 function openRenameDialog(name) {
@@ -1091,6 +1103,7 @@ function commitRename() {
   drawings[n] = drawings[renameTargetName];
   delete drawings[renameTargetName];
   if (currentId === renameTargetName) currentId = n;
+  scheduleSave();
   closeRenameDialog();
   refreshIconList();
 }
@@ -1107,6 +1120,65 @@ function persistCurrent() {
   drawings[currentId].svg = cleanClone().outerHTML;
   drawings[currentId].width = currentW;
   drawings[currentId].height = currentH;
+  scheduleSave();
+}
+
+// --- Auto-save to localStorage ------------------------------------------
+// All drawings and the current-active id are serialised to LS with a short
+// debounce so edits survive a reload / tab-close. On boot, loadAll()
+// restores from LS before falling back to the server icons.
+const LS_KEY = 'freegma:workspace:v1';
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToLocalStorage, 400);
+}
+function saveToLocalStorage() {
+  saveTimer = null;
+  try {
+    // Mirror the live canvas into drawings[currentId] before writing.
+    if (currentId && drawings[currentId]) {
+      drawings[currentId].svg = cleanClone().outerHTML;
+      drawings[currentId].width = currentW;
+      drawings[currentId].height = currentH;
+    }
+    const payload = { version: 1, currentId, drawings, savedAt: Date.now() };
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  } catch (e) {
+    // Quota exceeded / private mode — warn once but keep the in-memory session alive.
+    console.warn('[Freegma] auto-save failed:', e && e.message || e);
+  }
+}
+// Flush any pending debounced save immediately so rapid tab-closes don't
+// drop the latest edit.
+window.addEventListener('beforeunload', () => {
+  if (saveTimer) { clearTimeout(saveTimer); saveToLocalStorage(); }
+});
+
+function loadFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data || !data.drawings || typeof data.drawings !== 'object') return false;
+    const keys = Object.keys(data.drawings);
+    if (keys.length === 0) return false;
+    drawings = {};
+    for (const [name, d] of Object.entries(data.drawings)) {
+      if (d && typeof d.svg === 'string') {
+        drawings[name] = {
+          svg: d.svg,
+          width: Number(d.width) || 512,
+          height: Number(d.height) || 512,
+        };
+      }
+    }
+    if (data.currentId && drawings[data.currentId]) currentId = data.currentId;
+    return Object.keys(drawings).length > 0;
+  } catch (e) {
+    console.warn('[Freegma] auto-save restore failed:', e && e.message || e);
+    return false;
+  }
 }
 
 function newDrawing(width = 512, height = 512, name = null) {
@@ -1132,6 +1204,7 @@ function newDrawing(width = 512, height = 512, name = null) {
   refreshIconList();
   refreshElementList();
   propsPanel.innerHTML = '<div class="empty">Empty canvas — add shapes from the left</div>';
+  scheduleSave();
 }
 
 function loadDrawing(id) {
@@ -1170,6 +1243,7 @@ function loadDrawing(id) {
   refreshIconList();
   refreshElementList();
   propsPanel.innerHTML = '<div class="empty">Select an element</div>';
+  scheduleSave();
 }
 
 function cleanClone() {
@@ -3715,6 +3789,7 @@ function pushUndo() {
   undoStack.push(snapshotCanvas());
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
+  scheduleSave();
 }
 
 function popUndo() {
@@ -3722,6 +3797,7 @@ function popUndo() {
   redoStack.push(snapshotCanvas());
   if (redoStack.length > 50) redoStack.shift();
   restoreCanvas(undoStack.pop());
+  scheduleSave();
 }
 
 function popRedo() {
@@ -3729,6 +3805,7 @@ function popRedo() {
   undoStack.push(snapshotCanvas());
   if (undoStack.length > 50) undoStack.shift();
   restoreCanvas(redoStack.pop());
+  scheduleSave();
 }
 
 // =============================================================
@@ -5088,6 +5165,9 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-04-21', items: [
+    'Auto-save to localStorage — drawings and the last-open tab survive reload / tab close. Boot restores from storage before falling back to the built-in starter icons; a beforeunload flush keeps rapid tab-closes from dropping the latest edit.',
+  ]},
   { date: '2026-04-20', items: [
     'Effects section in the properties panel: toggle a drop shadow (X / Y offset, blur, color, opacity) and gaussian blur (radius) per shape. Rendered via SVG <filter>, so exports carry the effect faithfully.',
     'Gradient fills in the color picker: Solid / Linear / Radial tabs, checker-backed preview bar with draggable stops (click to add, Del to remove), angle slider for linear, and the SV/hue/hex editor + palette + eyedropper all route to the active stop.',
