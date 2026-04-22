@@ -3885,7 +3885,7 @@ function resizeElement(el, dx, dy, h, bb) {
     if (w > 2) { el.dataset.x = x; el.dataset.w = w; }
     if (ht > 2) { el.dataset.y = y; el.dataset.h = ht; }
     renderRectPath(el);
-  } else if (tag === 'rect') {
+  } else if (tag === 'rect' || tag === 'image') {
     let x = parseFloat(el.getAttribute('x')||0), y = parseFloat(el.getAttribute('y')||0);
     let w = parseFloat(el.getAttribute('width')||0), ht = parseFloat(el.getAttribute('height')||0);
     if (h.includes('e')) w += dx; if (h.includes('w')) { w -= dx; x += dx; }
