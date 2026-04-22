@@ -5182,6 +5182,9 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-04-22', items: [
+    'Fixed image resize: pasted / imported raster images now resize by updating x/y/width/height directly (like rects) instead of stacking a transform, so a move after a resize no longer snaps the image back.',
+  ]},
   { date: '2026-04-21', items: [
     'Auto-save to localStorage — drawings and the last-open tab survive reload / tab close. Boot restores from storage before falling back to the built-in starter icons; a beforeunload flush keeps rapid tab-closes from dropping the latest edit.',
     'Keyboard shortcut overlay (press "?" or click the keyboard icon in the top bar) with Figma-style tool shortcuts: V select, R rect, O ellipse, C circle, L line, A arrow, P path, T text.',
