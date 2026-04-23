@@ -1925,13 +1925,18 @@ function buildHGuide(y, snapped, ref) {
 
 // Resize-time alignment snap. Only the edges implied by the handle move,
 // so we snap just those to ref boxes and build matching guide lines.
-// Supports primitive rect/ellipse + rect-like paths (path[data-rect="1"]);
-// skips tags whose resize semantics don't map cleanly to per-edge deltas
-// (circle's radius-based resize, transform-based generic fallback).
+// Returns a positional snap delta computed from the element's current bbox.
+// Callers translate that delta into whatever their resize primitive uses
+// (positional attrs for rect/image/ellipse/rect-path, radius for circle,
+// scale factor for groups). Skips tags whose bbox doesn't move per-edge
+// (line, text, free-form path).
 function computeResizeSnap(el, handle) {
   const tag = el.tagName;
   const isRectPath = tag === 'path' && el.dataset.rect === '1';
-  if (!isRectPath && tag !== 'rect' && tag !== 'ellipse') {
+  const supported = isRectPath
+    || tag === 'rect' || tag === 'ellipse' || tag === 'image'
+    || tag === 'circle' || tag === 'g';
+  if (!supported) {
     return { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] };
   }
   const bb = bboxInCanvas(el);
@@ -4213,11 +4218,30 @@ window.addEventListener('mousemove', (e) => {
       const cumDy = sp.y - drag.startY;
       const h = drag.handle;
       const bb = drag.startBBox;
-      const scaleX = bb.width  > 0 ? (bb.width  + (h.includes('e') ? cumDx : h.includes('w') ? -cumDx : 0)) / bb.width  : 1;
-      const scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? cumDy : h.includes('n') ? -cumDy : 0)) / bb.height : 1;
       const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-      const scaleStr = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${Math.max(0.1,scaleX).toFixed(3)},${Math.max(0.1,scaleY).toFixed(3)}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
-      el0.setAttribute('transform', drag.startTransform ? `${scaleStr} ${drag.startTransform}` : scaleStr);
+      const apply = (sx, sy) => {
+        const s = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${Math.max(0.1,sx).toFixed(3)},${Math.max(0.1,sy).toFixed(3)}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
+        el0.setAttribute('transform', drag.startTransform ? `${s} ${drag.startTransform}` : s);
+      };
+      let scaleX = bb.width  > 0 ? (bb.width  + (h.includes('e') ? cumDx : h.includes('w') ? -cumDx : 0)) / bb.width  : 1;
+      let scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? cumDy : h.includes('n') ? -cumDy : 0)) / bb.height : 1;
+      apply(scaleX, scaleY);
+      // Edge snap. computeResizeSnap returns a positional delta against the
+      // group's live bbox; convert it to a scale-factor adjustment so the
+      // moving edge ends up exactly on the snapped ref. Sign flips on W/N
+      // because dragging those handles makes the moving edge move in the
+      // opposite direction of the scale increase.
+      const snap = e.shiftKey
+        ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+        : computeResizeSnap(el0, h);
+      if ((snap.snapDx || snap.snapDy) && bb.width > 0 && bb.height > 0) {
+        const xSign = h.includes('w') ? -1 : 1;
+        const ySign = h.includes('n') ? -1 : 1;
+        if (snap.snapDx) scaleX += xSign * 2 * snap.snapDx / bb.width;
+        if (snap.snapDy) scaleY += ySign * 2 * snap.snapDy / bb.height;
+        apply(scaleX, scaleY);
+      }
+      renderGuides(snap.vGuides, snap.hGuides);
     } else {
       const dx = sp.x - drag.x, dy = sp.y - drag.y;
       resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
@@ -5192,6 +5216,7 @@ const CHANGELOG = [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
     'Floating tools toolbar redesigned: squared-off with 4 px rounded corners (was pill-shaped) and dropped to the canvas bottom so it sits flush with the other UI chrome.',
     'Hold Shift while dragging or resizing to disable alignment snapping (raw movement, no edge pull). Snapping itself was already in place for both moves and resizes — this just adds the bypass modifier.',
+    'Resize snap now also fires on groups, images, and circles (previously only rect / ellipse / rect-path). For groups the positional snap delta is converted into a scale adjustment so the moving edge lands exactly on the aligned reference.',
   ]},
   { date: '2026-04-22', items: [
     'Fixed image resize: pasted / imported raster images now resize by updating x/y/width/height directly (like rects) instead of stacking a transform, so a move after a resize no longer snaps the image back.',
