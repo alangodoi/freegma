@@ -6,8 +6,9 @@ items off as they land; reshuffle freely.
 
 ## Small / quick wins
 
-- [ ] Alignment guides that **snap**, not just hint (shape-to-shape +
-      shape-to-frame, with Shift to disable).
+- [x] Alignment guides that **snap**, not just hint (shape-to-shape +
+      shape-to-frame, with Shift to disable). *Snap was already implemented
+      for moves & resizes; Shift-to-disable shipped 2026-04-23.*
 - [ ] Keyboard shortcuts to flip selection (H = horizontal, V conflicts with
       select — maybe Shift+H / Shift+V).
 - [ ] Export at 2× / 3× scale for PNG / WebP (retina assets).

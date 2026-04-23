@@ -4165,9 +4165,12 @@ window.addEventListener('mousemove', (e) => {
       left: selBox.left + deltaHypoX, right: selBox.right + deltaHypoX, cx: selBox.cx + deltaHypoX,
       top: selBox.top + deltaHypoY, bottom: selBox.bottom + deltaHypoY, cy: selBox.cy + deltaHypoY,
     };
-    const { snapDx, snapDy, vGuides, hGuides } = computeSnap(hypo);
-    const finalX = desiredX + snapDx;
-    const finalY = desiredY + snapDy;
+    // Shift bypasses snap — the user is asking for a raw drag with no pull.
+    const snap = e.shiftKey
+      ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+      : computeSnap(hypo);
+    const finalX = desiredX + snap.snapDx;
+    const finalY = desiredY + snap.snapDy;
     const applyX = finalX - drag.appliedX;
     const applyY = finalY - drag.appliedY;
     if (applyX || applyY) {
@@ -4175,7 +4178,7 @@ window.addEventListener('mousemove', (e) => {
     }
     drag.appliedX = finalX;
     drag.appliedY = finalY;
-    renderGuides(vGuides, hGuides);
+    renderGuides(snap.vGuides, snap.hGuides);
   } else if (drag.mode === 'resize' && selection.length === 1) {
     const el0 = selection[0];
     if (el0.tagName === 'text' && drag.startFontSize) {
@@ -4218,7 +4221,10 @@ window.addEventListener('mousemove', (e) => {
     } else {
       const dx = sp.x - drag.x, dy = sp.y - drag.y;
       resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
-      const snap = computeResizeSnap(el0, drag.handle);
+      // Shift bypasses snap — raw resize, no edge pull.
+      const snap = e.shiftKey
+        ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
+        : computeResizeSnap(el0, drag.handle);
       if (snap.snapDx || snap.snapDy) {
         resizeElement(el0, snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
       }
@@ -5185,6 +5191,7 @@ const CHANGELOG = [
   { date: '2026-04-23', items: [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
     'Floating tools toolbar redesigned: squared-off with 4 px rounded corners (was pill-shaped) and dropped to the canvas bottom so it sits flush with the other UI chrome.',
+    'Hold Shift while dragging or resizing to disable alignment snapping (raw movement, no edge pull). Snapping itself was already in place for both moves and resizes — this just adds the bypass modifier.',
   ]},
   { date: '2026-04-22', items: [
     'Fixed image resize: pasted / imported raster images now resize by updating x/y/width/height directly (like rects) instead of stacking a transform, so a move after a resize no longer snaps the image back.',
@@ -5275,6 +5282,7 @@ const SHORTCUTS = [
     { keys: ['⌘', 'Shift', 'G'],label: 'Ungroup' },
     { keys: ['Arrows'],         label: 'Nudge 1 px' },
     { keys: ['Shift', 'Arrows'],label: 'Nudge 10 px' },
+    { keys: ['Shift', 'Drag'],  label: 'Disable snap (raw drag / resize)' },
   ]},
   { group: 'Drawing', items: [
     { keys: ['Shift-drag'],     label: '45° line / square / circle' },
