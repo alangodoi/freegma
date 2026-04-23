@@ -4360,8 +4360,8 @@ window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && Date.now() - lastFormInputAt < 250) return;
 
-  // `?` — open the keyboard shortcut overlay.
-  if (e.key === '?') { e.preventDefault(); openShortcuts(); return; }
+  // F1 — open the keyboard shortcut overlay.
+  if (e.key === 'F1') { e.preventDefault(); openShortcuts(); return; }
 
   // Figma-style tool shortcuts: V select, R rect, O ellipse, C circle,
   // L line, A arrow, P path, T text. No modifier keys.
@@ -5182,6 +5182,9 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-04-23', items: [
+    'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
+  ]},
   { date: '2026-04-22', items: [
     'Fixed image resize: pasted / imported raster images now resize by updating x/y/width/height directly (like rects) instead of stacking a transform, so a move after a resize no longer snaps the image back.',
   ]},
@@ -5234,7 +5237,7 @@ const CHANGELOG = [
   ]},
 ];
 
-// Keyboard shortcuts dialog, opened with `?` or from the top bar.
+// Keyboard shortcuts dialog, opened with F1 or from the top bar.
 const SHORTCUTS = [
   { group: 'Tools', items: [
     { keys: ['V'],  label: 'Select (cancel tool)' },
@@ -5278,7 +5281,7 @@ const SHORTCUTS = [
     { keys: ['Del'],            label: 'Remove path anchor' },
   ]},
   { group: 'General', items: [
-    { keys: ['?'],              label: 'Show this overlay' },
+    { keys: ['F1'],             label: 'Show this overlay' },
     { keys: ['Right-click'],    label: 'Context menu' },
   ]},
 ];
