@@ -5184,7 +5184,7 @@ renameDialog.addEventListener('click', (e) => {
 const CHANGELOG = [
   { date: '2026-04-23', items: [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
-    'Floating tools pill moved down to the canvas bottom and squared-off with 4 px rounded corners (was pill-shaped, higher up) to match the rest of the UI.',
+    'Floating tools toolbar redesigned: squared-off with 4 px rounded corners (was pill-shaped) and dropped to the canvas bottom so it sits flush with the other UI chrome.',
   ]},
   { date: '2026-04-22', items: [
     'Fixed image resize: pasted / imported raster images now resize by updating x/y/width/height directly (like rects) instead of stacking a transform, so a move after a resize no longer snaps the image back.',
