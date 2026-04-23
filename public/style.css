@@ -667,28 +667,28 @@ textarea:focus { border-color: var(--bd-hi); }
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 56px;
+  bottom: 16px;
   display: flex;
   gap: 2px;
-  padding: 4px;
+  padding: 3px;
   background: rgba(20, 20, 35, 0.92);
   border: 1px solid var(--bd);
-  border-radius: 999px;
+  border-radius: calc(var(--r) + 2px);
   box-shadow: 0 10px 30px rgba(0,0,0,0.55);
   z-index: 20;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
 .floating-tools button {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--r);
   color: var(--tx);
   font-family: var(--mono);
   font-size: 15px;
