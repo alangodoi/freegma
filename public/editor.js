@@ -305,6 +305,10 @@ function isArrow(el) {
   return el && el.tagName === 'path' && el.dataset && el.dataset.arrow === '1';
 }
 
+function isBrush(el) {
+  return el && el.tagName === 'g' && el.dataset && el.dataset.brush === 'blur';
+}
+
 function getArrow(el) {
   return {
     x1: parseFloat(el.dataset.x1) || 0,
@@ -1349,7 +1353,8 @@ function buildLayerRow(el, depth, index, siblings, parent) {
   const isSel = selection.includes(el);
   const isLocked = !!el.dataset.locked;
   const isHidden = !!el.dataset.hidden;
-  const isGroup = el.tagName === 'g';
+  const isImageWrap = el.tagName === 'g' && el.dataset && el.dataset.imageWrap === '1';
+  const isGroup = el.tagName === 'g' && !isImageWrap;
   const expanded = isGroup && expandedGroups.has(el);
 
   const row = document.createElement('div');
@@ -1382,7 +1387,7 @@ function buildLayerRow(el, depth, index, siblings, parent) {
 
   const lbl = document.createElement('span');
   lbl.className = 'elem-label';
-  const label = isGroup ? `group · ${el.children.length}` : el.tagName;
+  const label = isImageWrap ? 'image · blurred' : isGroup ? `group · ${el.children.length}` : el.tagName;
   lbl.textContent = label;
   row.appendChild(lbl);
 
@@ -3978,6 +3983,96 @@ svgCanvas.addEventListener('mousedown', (e) => {
       el.setAttribute('dominant-baseline', 'hanging');
       el.setAttribute('text-anchor', 'start');
       setMultilineText(el, 'Text');
+    } else if (pendingShape.marker === 'brush' && tag === 'path') {
+      // Blur Brush: only operates on <image>s. SVG has no portable way to blur
+      // sibling shapes, so we clone the target image, apply feGaussianBlur to
+      // the clone, and mask it to the brush stroke. The first stroke wraps the
+      // image in a <g data-image-wrap="1"> so subsequent strokes (and image
+      // moves/resizes) carry the blur with it. The blur overlays inside the
+      // wrapper are pointer-events:none so clicks pass through to the image.
+      const target = (tgt && tgt.tagName === 'image') ? tgt : null;
+      if (!target) return;
+
+      let wrapper;
+      if (target.parentNode && target.parentNode.dataset && target.parentNode.dataset.imageWrap === '1') {
+        wrapper = target.parentNode;
+      } else if (target.parentNode === svgCanvas) {
+        wrapper = document.createElementNS(SVG_NS, 'g');
+        wrapper.dataset.imageWrap = '1';
+        svgCanvas.insertBefore(wrapper, target);
+        wrapper.appendChild(target);
+      } else {
+        return; // image is inside some other group — leave it alone
+      }
+
+      const blurStd   = Math.max(2, Math.min(currentW, currentH) * 0.02);
+      const thickness = Math.max(8, Math.min(currentW, currentH) * 0.05);
+      const id = nextEffectId();
+      const filterId = `blurBrushF-${id}`;
+      const maskId   = `blurBrushM-${id}`;
+
+      const ix = parseFloat(target.getAttribute('x')) || 0;
+      const iy = parseFloat(target.getAttribute('y')) || 0;
+      const iw = parseFloat(target.getAttribute('width'))  || 0;
+      const ih = parseFloat(target.getAttribute('height')) || 0;
+      const xlinkHref = target.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+      const href      = target.getAttribute('href') || xlinkHref || '';
+
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.dataset.brush = 'blur';
+      g.dataset.blurRadius = String(blurStd);
+      g.style.pointerEvents = 'none';
+
+      const defs = document.createElementNS(SVG_NS, 'defs');
+
+      const filter = document.createElementNS(SVG_NS, 'filter');
+      filter.setAttribute('id', filterId);
+      filter.setAttribute('x', '-20%');
+      filter.setAttribute('y', '-20%');
+      filter.setAttribute('width',  '140%');
+      filter.setAttribute('height', '140%');
+      const fb = document.createElementNS(SVG_NS, 'feGaussianBlur');
+      fb.setAttribute('stdDeviation', String(blurStd));
+      filter.appendChild(fb);
+      defs.appendChild(filter);
+
+      const mask = document.createElementNS(SVG_NS, 'mask');
+      mask.setAttribute('id', maskId);
+      mask.setAttribute('maskUnits', 'userSpaceOnUse');
+      const pad = blurStd * 4 + thickness;
+      mask.setAttribute('x', (ix - pad).toFixed(2));
+      mask.setAttribute('y', (iy - pad).toFixed(2));
+      mask.setAttribute('width',  (iw + pad * 2).toFixed(2));
+      mask.setAttribute('height', (ih + pad * 2).toFixed(2));
+      const maskPath = document.createElementNS(SVG_NS, 'path');
+      maskPath.setAttribute('d', `M${sp.x.toFixed(2)},${sp.y.toFixed(2)}`);
+      maskPath.setAttribute('stroke', 'white');
+      maskPath.setAttribute('stroke-width', String(thickness));
+      maskPath.setAttribute('stroke-linecap', 'round');
+      maskPath.setAttribute('stroke-linejoin', 'round');
+      maskPath.setAttribute('fill', 'none');
+      mask.appendChild(maskPath);
+      defs.appendChild(mask);
+
+      g.appendChild(defs);
+
+      const clone = document.createElementNS(SVG_NS, 'image');
+      clone.setAttribute('x', String(ix));
+      clone.setAttribute('y', String(iy));
+      clone.setAttribute('width',  String(iw));
+      clone.setAttribute('height', String(ih));
+      const par = target.getAttribute('preserveAspectRatio');
+      if (par) clone.setAttribute('preserveAspectRatio', par);
+      const tr = target.getAttribute('transform');
+      if (tr) clone.setAttribute('transform', tr);
+      if (href) clone.setAttribute('href', href);
+      clone.setAttribute('filter', `url(#${filterId})`);
+      clone.setAttribute('mask',   `url(#${maskId})`);
+      g.appendChild(clone);
+
+      wrapper.appendChild(g);
+      drag = { mode: 'brush', el: g, wrapper, maskPath, blurNode: fb, lastX: sp.x, lastY: sp.y };
+      return;
     } else {
       el.setAttribute('fill', c);
     }
@@ -4092,6 +4187,15 @@ svgCanvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mousemove', (e) => {
   if (!drag) return;
   const sp = svgPt(e);
+
+  if (drag.mode === 'brush') {
+    const dx = sp.x - drag.lastX, dy = sp.y - drag.lastY;
+    if (dx*dx + dy*dy < 1) return;
+    drag.maskPath.setAttribute('d',
+      drag.maskPath.getAttribute('d') + ` L${sp.x.toFixed(2)},${sp.y.toFixed(2)}`);
+    drag.lastX = sp.x; drag.lastY = sp.y;
+    return;
+  }
 
   if (drag.mode === 'draw') {
     let endX = sp.x, endY = sp.y;
@@ -4275,6 +4379,26 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
+  if (drag && drag.mode === 'brush') {
+    const { el, wrapper, maskPath } = drag;
+    if (!/[Ll]/.test(maskPath.getAttribute('d') || '')) {
+      // Bare click — discard this stroke. If we had to create the wrapper for
+      // it (and there's no other blur in the wrapper), unwrap the image.
+      el.remove();
+      const hasOtherBlur = wrapper.querySelector(':scope > g[data-brush="blur"]');
+      if (!hasOtherBlur) {
+        const img = wrapper.querySelector(':scope > image');
+        if (img) svgCanvas.insertBefore(img, wrapper);
+        wrapper.remove();
+      }
+    } else {
+      refreshElementList();
+      selectElement(wrapper);
+    }
+    exitDrawMode();
+    drag = null;
+    return;
+  }
   if (drag && drag.mode === 'draw') {
     const { el, tag, startX, startY } = drag;
     const bb = el.getBBox();
@@ -5009,6 +5133,7 @@ const shapes = [
   { label: 'Line',    tag: 'line',    icon: '╱', hint: 'Click a point or drag from one end to the other (hold Shift for 0°/45°/90°)' },
   { label: 'Arrow',   tag: 'path',    icon: '→', hint: 'Drag to draw an arrow (hold Shift for 0°/45°/90°)', marker: 'arrow' },
   { label: 'Path',    tag: 'path',    icon: '✎', hint: 'Click a point or drag to size a diamond path (editable after)' },
+  { label: 'Blur Brush', tag: 'path', icon: '◐', hint: 'Drag over an image to paint a blurred stripe on it', marker: 'brush' },
   { label: 'Text',    tag: 'text',    icon: 'T', hint: 'Click the canvas to place text; edit content and font in the properties panel' },
 ];
 const shapeButtons = [];
