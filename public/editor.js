@@ -1560,27 +1560,28 @@ function alignSelection(kind) {
 }
 
 function distributeSelection(axis) {
-  if (selection.length < 3) return;
+  if (selection.length < 2) return;
   const boxes = selection.map(el => ({ el, bb: bboxInCanvas(el) }));
   if (axis === 'h') boxes.sort((a, b) => a.bb.x - b.bb.x);
   else              boxes.sort((a, b) => a.bb.y - b.bb.y);
   const first = boxes[0], last = boxes[boxes.length - 1];
-  let totalSize, span;
+  let totalSize, span, leading;
   if (axis === 'h') {
     totalSize = boxes.reduce((s, b) => s + b.bb.width, 0);
+    leading = first.bb.x;
     span = (last.bb.x + last.bb.width) - first.bb.x;
   } else {
     totalSize = boxes.reduce((s, b) => s + b.bb.height, 0);
+    leading = first.bb.y;
     span = (last.bb.y + last.bb.height) - first.bb.y;
   }
-  if (span <= totalSize) return; // overlapping — nothing to distribute
-  const gap = (span - totalSize) / (boxes.length - 1);
+  const free = span - totalSize;
+  if (free < 0) return; // overlapping — nothing to distribute
+  // Equal gap before the first item, between each pair, and after the last.
+  const gap = free / (boxes.length + 1);
   pushUndo();
-  let cursor = axis === 'h'
-    ? first.bb.x + first.bb.width + gap
-    : first.bb.y + first.bb.height + gap;
-  for (let i = 1; i < boxes.length - 1; i++) {
-    const b = boxes[i];
+  let cursor = leading + gap;
+  for (const b of boxes) {
     if (axis === 'h') {
       const dx = cursor - b.bb.x;
       if (dx) moveElement(b.el, dx, 0);
@@ -1601,6 +1602,10 @@ function renderMultiSelectProps(count) {
   header.className = 'empty';
   header.textContent = `${count} elements selected`;
   propsPanel.appendChild(header);
+  const arrangeLbl = document.createElement('div');
+  arrangeLbl.className = 'panel-section-label';
+  arrangeLbl.textContent = 'Align & distribute';
+  propsPanel.appendChild(arrangeLbl);
   const grid = document.createElement('div');
   grid.className = 'align-grid';
   const btn = (hint, icon, onClick, disabled = false) => {
@@ -1628,11 +1633,11 @@ function renderMultiSelectProps(count) {
   btn('Align left edges',           ICONS.left,    () => alignSelection('left'));
   btn('Align horizontal centers',    ICONS.hcenter, () => alignSelection('hcenter'));
   btn('Align right edges',          ICONS.right,   () => alignSelection('right'));
-  btn('Distribute horizontally (equal gaps)', ICONS.distH, () => distributeSelection('h'), count < 3);
+  btn('Distribute horizontally (equal gaps)', ICONS.distH, () => distributeSelection('h'), count < 2);
   btn('Align top edges',            ICONS.top,     () => alignSelection('top'));
   btn('Align vertical centers',      ICONS.vmiddle, () => alignSelection('vmiddle'));
   btn('Align bottom edges',         ICONS.bottom,  () => alignSelection('bottom'));
-  btn('Distribute vertically (equal gaps)',   ICONS.distV, () => distributeSelection('v'), count < 3);
+  btn('Distribute vertically (equal gaps)',   ICONS.distV, () => distributeSelection('v'), count < 2);
   propsPanel.appendChild(grid);
 }
 
@@ -4987,6 +4992,9 @@ function buildCtxMenu(hasSelection) {
   mk('Group',    'Ctrl+G',       () => groupSelection(),   { disabled: !canGroup });
   mk('Ungroup',  'Ctrl+Shift+G', () => ungroupSelection(), { disabled: !canUngroup });
   sep();
+  mk('Distribute horizontally', '', () => distributeSelection('h'), { disabled: selection.length < 2 });
+  mk('Distribute vertically',   '', () => distributeSelection('v'), { disabled: selection.length < 2 });
+  sep();
   mk(allLocked ? 'Unlock' : 'Lock', '',  () => toggleSelectionLock(),   { disabled: !hasSelection });
   mk(allHidden ? 'Show'   : 'Hide', '',  () => toggleSelectionHidden(), { disabled: !hasSelection });
   sep();
@@ -5522,6 +5530,7 @@ const CHANGELOG = [
     'Hold Shift while dragging a corner resize handle to lock aspect ratio (images, rects, groups, paths). Ctrl/Cmd also bypasses alignment snap on move and resize.',
     'Import dialog accepts PNG, JPEG, WebP, and GIF in addition to SVG.',
     'Fixed resize flicker on imported SVG paths and groups.',
+    'Distribute horizontally / vertically now works with 2+ selected shapes (equal gaps including edge margins). Also in the right-click menu.',
   ]},
   { date: '2026-04-23', items: [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',

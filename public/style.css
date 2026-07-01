@@ -850,6 +850,14 @@ textarea:focus { border-color: var(--bd-hi); }
 }
 
 /* ---- Align & distribute toolbar (shown when 2+ selected) ---- */
+.panel-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--tx-dim);
+  margin-top: var(--s2);
+  margin-bottom: 2px;
+}
 .align-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
