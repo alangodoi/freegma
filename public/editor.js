@@ -1653,14 +1653,128 @@ function swapSelected(oldEl, newEl) {
   refreshElementList();
 }
 
-// BBox of an element in svgCanvas user-space. getBBox() returns the local,
-// pre-transform bbox; if the element has its own `transform` attribute we push
-// the 4 corners through that transform's consolidated matrix. Shapes are
-// direct children of svgCanvas so no ancestor transforms apply. We avoid
-// getCTM() because browsers disagree on whether it folds in the outer SVG's
-// viewBox transformation.
-function bboxInCanvas(el) {
-  const bb = el.getBBox();
+// Raster href cache (also used for tight <image> selection bounds).
+const cpImageCache = new Map();
+
+function cpLoadImage(href, onReady) {
+  if (!href) return null;
+  let entry = cpImageCache.get(href);
+  if (!entry) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    entry = { img, colors: null };
+    cpImageCache.set(href, entry);
+    if (onReady) img.addEventListener('load', () => onReady(entry), { once: true });
+    img.addEventListener('error', () => {}, { once: true });
+    img.src = href;
+  } else if (onReady && (!entry.img.complete || !entry.img.naturalWidth)) {
+    entry.img.addEventListener('load', () => onReady(entry), { once: true });
+  }
+  return entry;
+}
+
+// ---- Tight visual bounds (selection, guides, resize) ----
+// getBBox() includes invisible siblings (full-canvas rects), nested <svg>
+// width/height, and the full <image> box even when preserveAspectRatio
+// letterboxes the raster. Union only painted children / fitted image area.
+
+function parseImageFitBox(rx, ry, rw, rh, iw, ih, par) {
+  const parts = par.trim().split(/\s+/);
+  if (parts[0] === 'none' || !iw || !ih || !rw || !rh) {
+    return { x: rx, y: ry, width: rw, height: rh };
+  }
+  const align = parts[0] || 'xMidYMid';
+  const meet = (parts[1] || 'meet') !== 'slice';
+  const scale = meet ? Math.min(rw / iw, rh / ih) : Math.max(rw / iw, rh / ih);
+  const renderedW = iw * scale;
+  const renderedH = ih * scale;
+  let renderedX = rx;
+  let renderedY = ry;
+  if (align.includes('xMid')) renderedX = rx + (rw - renderedW) / 2;
+  else if (align.includes('xMax')) renderedX = rx + rw - renderedW;
+  if (align.includes('YMid')) renderedY = ry + (rh - renderedH) / 2;
+  else if (align.includes('YMax')) renderedY = ry + rh - renderedH;
+  return { x: renderedX, y: renderedY, width: renderedW, height: renderedH };
+}
+
+function isIgnoredForVisualBounds(el) {
+  if (!el || !el.tagName) return true;
+  const d = el.dataset;
+  if (d && (d.bounds || d.handles || d.guides || d.pathAnchors || d.marquee || d.bg || d.hidden)) return true;
+  if (el.getAttribute('display') === 'none') return true;
+  if (el.getAttribute('visibility') === 'hidden') return true;
+  const opacity = el.getAttribute('opacity');
+  if (opacity !== null && parseFloat(opacity) === 0) return true;
+  return false;
+}
+
+function isPaintInvisible(el) {
+  if (el.tagName === 'g' || el.tagName === 'svg') return false;
+  const fill = el.getAttribute('fill');
+  const stroke = el.getAttribute('stroke');
+  const sw = parseFloat(el.getAttribute('stroke-width') || (stroke && stroke !== 'none' ? '1' : '0'));
+  const hasFill = fill && fill !== 'none' && fill !== 'transparent';
+  const fillOp = el.getAttribute('fill-opacity');
+  const hasVisibleFill = hasFill && (fillOp === null || parseFloat(fillOp) > 0);
+  const hasStroke = stroke && stroke !== 'none' && sw > 0;
+  const strokeOp = el.getAttribute('stroke-opacity');
+  const hasVisibleStroke = hasStroke && (strokeOp === null || parseFloat(strokeOp) > 0);
+  return !hasVisibleFill && !hasVisibleStroke;
+}
+
+function unionLocalBboxes(boxes) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let any = false;
+  for (const b of boxes) {
+    if (!b || !isFinite(b.width) || !isFinite(b.height) || b.width <= 0 || b.height <= 0) continue;
+    any = true;
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  return any ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
+}
+
+function imageRenderedLocalBBox(imgEl) {
+  const rx = parseFloat(imgEl.getAttribute('x') || 0);
+  const ry = parseFloat(imgEl.getAttribute('y') || 0);
+  const rw = parseFloat(imgEl.getAttribute('width') || 0);
+  const rh = parseFloat(imgEl.getAttribute('height') || 0);
+  if (!rw || !rh) return { x: rx, y: ry, width: rw, height: rh };
+  const href = imgEl.getAttribute('href') || imgEl.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+  if (!href) return { x: rx, y: ry, width: rw, height: rh };
+  const entry = cpLoadImage(href, () => {
+    if (selection.includes(imgEl)) updateHandles();
+  });
+  const iw = entry?.img?.naturalWidth;
+  const ih = entry?.img?.naturalHeight;
+  if (!iw || !ih) return { x: rx, y: ry, width: rw, height: rh };
+  const par = (imgEl.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
+  return parseImageFitBox(rx, ry, rw, rh, iw, ih, par);
+}
+
+function visualLocalBBox(el) {
+  if (isIgnoredForVisualBounds(el)) return { x: 0, y: 0, width: 0, height: 0 };
+  if (el.tagName === 'image') return imageRenderedLocalBBox(el);
+  if (el.tagName === 'g' || el.tagName === 'svg') {
+    const boxes = [];
+    for (const child of el.children) {
+      if (isIgnoredForVisualBounds(child)) continue;
+      if (isPaintInvisible(child)) continue;
+      boxes.push(visualLocalBBox(child));
+    }
+    const u = unionLocalBboxes(boxes);
+    if (u) return u;
+  }
+  try {
+    const bb = el.getBBox();
+    if (bb.width > 0 && bb.height > 0) return bb;
+  } catch {}
+  return { x: 0, y: 0, width: 0, height: 0 };
+}
+
+function transformLocalBBoxToCanvas(el, bb) {
   if (!el.getAttribute('transform')) return bb;
   let m;
   try {
@@ -1671,10 +1785,10 @@ function bboxInCanvas(el) {
   const pt = svgCanvas.createSVGPoint();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const corners = [
-    [bb.x,            bb.y],
+    [bb.x, bb.y],
     [bb.x + bb.width, bb.y],
     [bb.x + bb.width, bb.y + bb.height],
-    [bb.x,            bb.y + bb.height],
+    [bb.x, bb.y + bb.height],
   ];
   for (const [x, y] of corners) {
     pt.x = x; pt.y = y;
@@ -1685,6 +1799,12 @@ function bboxInCanvas(el) {
     if (t.y > maxY) maxY = t.y;
   }
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// BBox of an element in svgCanvas user-space. Uses visualLocalBBox so selection
+// hugs painted content; transform attrs are folded in via the local corners.
+function bboxInCanvas(el) {
+  return transformLocalBBoxToCanvas(el, visualLocalBBox(el));
 }
 
 function updateHandles() {
@@ -2891,30 +3011,6 @@ function cpCollectCanvasColors() {
   return Array.from(set);
 }
 
-// Cache of raster <img> by href + extracted colors. Lets the eyedropper
-// sample pixels from SVG <image> elements and seeds the palette with
-// dominant image colors.
-const cpImageCache = new Map();
-
-function cpLoadImage(href, onReady) {
-  if (!href) return null;
-  let entry = cpImageCache.get(href);
-  if (!entry) {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    entry = { img, colors: null };
-    cpImageCache.set(href, entry);
-    if (onReady) img.addEventListener('load', () => onReady(entry), { once: true });
-    img.addEventListener('error', () => {}, { once: true });
-    img.src = href;
-  } else if (onReady && (!entry.img.complete || !entry.img.naturalWidth)) {
-    // Still loading — queue the callback. Never call it synchronously, so
-    // callers that re-enter cpRenderPalette can't produce infinite recursion.
-    entry.img.addEventListener('load', () => onReady(entry), { once: true });
-  }
-  return entry;
-}
-
 function cpSamplePixelFromImage(imgEl, clientX, clientY) {
   const href = imgEl.getAttribute('href') || imgEl.getAttribute('xlink:href');
   if (!href) return null;
@@ -2931,20 +3027,12 @@ function cpSamplePixelFromImage(imgEl, clientX, clientY) {
   const rw = parseFloat(imgEl.getAttribute('width')  || 0);
   const rh = parseFloat(imgEl.getAttribute('height') || 0);
   if (!rw || !rh) return null;
-  // Respect preserveAspectRatio="xMidYMid meet" (our default for pasted images).
   const iw = entry.img.naturalWidth;
   const ih = entry.img.naturalHeight;
   const par = (imgEl.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim();
-  let renderedX = rx, renderedY = ry, renderedW = rw, renderedH = rh;
-  if (par !== 'none') {
-    const sc = Math.min(rw / iw, rh / ih);
-    renderedW = iw * sc;
-    renderedH = ih * sc;
-    renderedX = rx + (rw - renderedW) / 2;
-    renderedY = ry + (rh - renderedH) / 2;
-  }
-  const sx = Math.floor((local.x - renderedX) / renderedW * iw);
-  const sy = Math.floor((local.y - renderedY) / renderedH * ih);
+  const fit = parseImageFitBox(rx, ry, rw, rh, iw, ih, par);
+  const sx = Math.floor((local.x - fit.x) / fit.width * iw);
+  const sy = Math.floor((local.y - fit.y) / fit.height * ih);
   if (sx < 0 || sx >= iw || sy < 0 || sy >= ih) return null;
   const c = document.createElement('canvas');
   c.width = 1; c.height = 1;
@@ -3885,6 +3973,107 @@ function formatMatrix(m) {
   return `matrix(${m.a},${m.b},${m.c},${m.d},${m.e},${m.f})`;
 }
 
+function usesAttrResize(el) {
+  const tag = el.tagName;
+  if (tag === 'path' && el.dataset.rect === '1') return true;
+  return tag === 'rect' || tag === 'image' || tag === 'circle' || tag === 'ellipse';
+}
+
+function isCornerResizeHandle(h) {
+  return h === 'nw' || h === 'ne' || h === 'sw' || h === 'se';
+}
+
+// Figma / Photoshop pattern: Shift on a corner handle locks aspect ratio.
+function lockResizeAspect(handle, shiftKey) {
+  return shiftKey && isCornerResizeHandle(handle);
+}
+
+function bypassAlignmentSnap(e) {
+  return e.shiftKey || e.ctrlKey || e.metaKey;
+}
+
+function captureResizeGeom(el) {
+  const tag = el.tagName;
+  if (tag === 'path' && el.dataset.rect === '1') {
+    return {
+      kind: 'rectPath',
+      x: +el.dataset.x || 0, y: +el.dataset.y || 0,
+      w: +el.dataset.w || 0, h: +el.dataset.h || 0,
+    };
+  }
+  if (tag === 'rect' || tag === 'image') {
+    return {
+      kind: 'box',
+      x: parseFloat(el.getAttribute('x') || 0),
+      y: parseFloat(el.getAttribute('y') || 0),
+      w: parseFloat(el.getAttribute('width') || 0),
+      h: parseFloat(el.getAttribute('height') || 0),
+    };
+  }
+  return null;
+}
+
+function computeBoxGeomFromDrag(geom, cumDx, cumDy, h, lockAspect) {
+  let { x, y, w, h: ht } = geom;
+  let nx = x, ny = y, nw = w, nht = ht;
+  if (h.includes('e')) nw = w + cumDx;
+  else if (h.includes('w')) { nw = w - cumDx; nx = x + cumDx; }
+  if (h.includes('s')) nht = ht + cumDy;
+  else if (h.includes('n')) { nht = ht - cumDy; ny = y + cumDy; }
+  nw = Math.max(2, nw);
+  nht = Math.max(2, nht);
+  if (lockAspect && w > 0 && ht > 0) {
+    const scaleX = nw / w;
+    const scaleY = nht / ht;
+    const scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+    nw = Math.max(2, w * scale);
+    nht = Math.max(2, ht * scale);
+    if (h.includes('w')) nx = x + w - nw;
+    else nx = x;
+    if (h.includes('n')) ny = y + ht - nht;
+    else ny = y;
+  }
+  return { kind: geom.kind, x: nx, y: ny, w: nw, h: nht };
+}
+
+function applyResizeGeom(el, geom) {
+  if (!geom) return;
+  if (geom.kind === 'rectPath') {
+    el.dataset.x = geom.x;
+    el.dataset.y = geom.y;
+    el.dataset.w = geom.w;
+    el.dataset.h = geom.h;
+    renderRectPath(el);
+  } else if (geom.kind === 'box') {
+    el.setAttribute('x', geom.x);
+    el.setAttribute('y', geom.y);
+    el.setAttribute('width', geom.w);
+    el.setAttribute('height', geom.h);
+  }
+}
+
+// Scale around the frozen start bbox center, composed on top of startTransform.
+// cumDx/cumDy are total drag from mousedown; scaleX/scaleY override the
+// computed factors (used when applying a snap correction on groups).
+function applyTransformResize(el, h, bb, startTransform, cumDx, cumDy, scaleX, scaleY, lockAspect) {
+  if (scaleX == null) {
+    scaleX = bb.width > 0 ? (bb.width + (h.includes('e') ? cumDx : h.includes('w') ? -cumDx : 0)) / bb.width : 1;
+  }
+  if (scaleY == null) {
+    scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? cumDy : h.includes('n') ? -cumDy : 0)) / bb.height : 1;
+  }
+  if (lockAspect) {
+    const s = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+    scaleX = scaleY = s;
+  }
+  scaleX = Math.max(0.1, scaleX);
+  scaleY = Math.max(0.1, scaleY);
+  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  const s = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${scaleX.toFixed(3)},${scaleY.toFixed(3)}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
+  el.setAttribute('transform', startTransform ? `${s} ${startTransform}` : s);
+  return { scaleX, scaleY };
+}
+
 function resizeElement(el, dx, dy, h, bb) {
   const tag = el.tagName;
   if (tag === 'path' && el.dataset.rect === '1') {
@@ -3918,11 +4107,6 @@ function resizeElement(el, dx, dy, h, bb) {
     if (h.includes('s') || h.includes('n')) ry += (h.includes('n') ? -dy : dy);
     el.setAttribute('rx', Math.max(2, rx));
     el.setAttribute('ry', Math.max(2, ry));
-  } else {
-    const scaleX = bb.width > 0 ? (bb.width + (h.includes('e') ? dx : h.includes('w') ? -dx : 0)) / bb.width : 1;
-    const scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? dy : h.includes('n') ? -dy : 0)) / bb.height : 1;
-    const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-    el.setAttribute('transform', `translate(${cx.toFixed(1)},${cy.toFixed(1)}) scale(${Math.max(0.1,scaleX).toFixed(3)},${Math.max(0.1,scaleY).toFixed(3)}) translate(${(-cx).toFixed(1)},${(-cy).toFixed(1)})`);
   }
 }
 
@@ -4113,7 +4297,8 @@ svgCanvas.addEventListener('mousedown', (e) => {
       const startFontSize = selection[0].tagName === 'text'
         ? (parseFloat(selection[0].getAttribute('font-size')) || 16) : null;
       const startTransform = selection[0].getAttribute('transform') || '';
-      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: selection[0].getBBox(), startX: sp.x, startY: sp.y, startFontSize, startTransform, x: sp.x, y: sp.y };
+      const startGeom = captureResizeGeom(selection[0]);
+      drag = { mode: 'resize', handle: tgt.dataset.handle, startBBox: visualLocalBBox(selection[0]), startGeom, startX: sp.x, startY: sp.y, startFontSize, startTransform, x: sp.x, y: sp.y };
     }
     e.preventDefault(); e.stopPropagation();
     return;
@@ -4274,8 +4459,7 @@ window.addEventListener('mousemove', (e) => {
       left: selBox.left + deltaHypoX, right: selBox.right + deltaHypoX, cx: selBox.cx + deltaHypoX,
       top: selBox.top + deltaHypoY, bottom: selBox.bottom + deltaHypoY, cy: selBox.cy + deltaHypoY,
     };
-    // Shift bypasses snap — the user is asking for a raw drag with no pull.
-    const snap = e.shiftKey
+    const snap = bypassAlignmentSnap(e)
       ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
       : computeSnap(hypo);
     const finalX = desiredX + snap.snapDx;
@@ -4314,49 +4498,45 @@ window.addEventListener('mousemove', (e) => {
       scale = Math.max(0.1, scale);
       el0.setAttribute('font-size', (drag.startFontSize * scale).toFixed(2));
     } else if (el0.tagName === 'g') {
-      // Groups resize via a fresh transform built from the frozen startBBox
-      // + cumulative drag, then re-composed with the group's startTransform.
-      // Falling through to the generic transform-scale branch would fail
-      // because it treats the incremental dx/dy as cumulative.
       const cumDx = sp.x - drag.startX;
       const cumDy = sp.y - drag.startY;
       const h = drag.handle;
       const bb = drag.startBBox;
-      const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-      const apply = (sx, sy) => {
-        const s = `translate(${cx.toFixed(3)},${cy.toFixed(3)}) scale(${Math.max(0.1,sx).toFixed(3)},${Math.max(0.1,sy).toFixed(3)}) translate(${(-cx).toFixed(3)},${(-cy).toFixed(3)})`;
-        el0.setAttribute('transform', drag.startTransform ? `${s} ${drag.startTransform}` : s);
-      };
-      let scaleX = bb.width  > 0 ? (bb.width  + (h.includes('e') ? cumDx : h.includes('w') ? -cumDx : 0)) / bb.width  : 1;
-      let scaleY = bb.height > 0 ? (bb.height + (h.includes('s') ? cumDy : h.includes('n') ? -cumDy : 0)) / bb.height : 1;
-      apply(scaleX, scaleY);
-      // Edge snap. computeResizeSnap returns a positional delta against the
-      // group's live bbox; convert it to a scale-factor adjustment so the
-      // moving edge ends up exactly on the snapped ref. Sign flips on W/N
-      // because dragging those handles makes the moving edge move in the
-      // opposite direction of the scale increase.
-      const snap = e.shiftKey
+      const aspect = lockResizeAspect(h, e.shiftKey);
+      let { scaleX, scaleY } = applyTransformResize(el0, h, bb, drag.startTransform, cumDx, cumDy, null, null, aspect);
+      const snap = bypassAlignmentSnap(e)
         ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
         : computeResizeSnap(el0, h);
       if ((snap.snapDx || snap.snapDy) && bb.width > 0 && bb.height > 0) {
+        const live = bboxInCanvas(el0);
         const xSign = h.includes('w') ? -1 : 1;
         const ySign = h.includes('n') ? -1 : 1;
-        if (snap.snapDx) scaleX += xSign * 2 * snap.snapDx / bb.width;
-        if (snap.snapDy) scaleY += ySign * 2 * snap.snapDy / bb.height;
-        apply(scaleX, scaleY);
+        if (snap.snapDx && live.width > 0) scaleX += xSign * 2 * snap.snapDx / live.width;
+        if (snap.snapDy && live.height > 0) scaleY += ySign * 2 * snap.snapDy / live.height;
+        applyTransformResize(el0, h, bb, drag.startTransform, cumDx, cumDy, scaleX, scaleY, aspect);
       }
       renderGuides(snap.vGuides, snap.hGuides);
-    } else {
-      const dx = sp.x - drag.x, dy = sp.y - drag.y;
-      resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
-      // Shift bypasses snap — raw resize, no edge pull.
-      const snap = e.shiftKey
+    } else if (usesAttrResize(el0)) {
+      const cumDx = sp.x - drag.startX;
+      const cumDy = sp.y - drag.startY;
+      const aspect = lockResizeAspect(drag.handle, e.shiftKey);
+      if (drag.startGeom) {
+        applyResizeGeom(el0, computeBoxGeomFromDrag(drag.startGeom, cumDx, cumDy, drag.handle, aspect));
+      } else {
+        const dx = sp.x - drag.x, dy = sp.y - drag.y;
+        resizeElement(el0, dx, dy, drag.handle, drag.startBBox);
+      }
+      const snap = bypassAlignmentSnap(e)
         ? { snapDx: 0, snapDy: 0, vGuides: [], hGuides: [] }
         : computeResizeSnap(el0, drag.handle);
       if (snap.snapDx || snap.snapDy) {
         resizeElement(el0, snap.snapDx, snap.snapDy, drag.handle, drag.startBBox);
       }
       renderGuides(snap.vGuides, snap.hGuides);
+    } else {
+      const cumDx = sp.x - drag.startX;
+      const cumDy = sp.y - drag.startY;
+      applyTransformResize(el0, drag.handle, drag.startBBox, drag.startTransform, cumDx, cumDy, null, null, lockResizeAspect(drag.handle, e.shiftKey));
     }
     populateProps(selection[0]);
     drag.x = sp.x; drag.y = sp.y;
@@ -4442,7 +4622,7 @@ window.addEventListener('mouseup', () => {
     return;
   }
   if (drag && drag.mode === 'resize' && selection.length === 1) {
-    drag.startBBox = selection[0].getBBox();
+    drag.startBBox = visualLocalBBox(selection[0]);
   }
   if (drag && (drag.mode === 'move' || drag.mode === 'resize')) clearGuides();
   drag = null;
@@ -5337,6 +5517,12 @@ renameDialog.addEventListener('click', (e) => {
 // Changelog dialog — opened from the top bar button, dismissed via Esc,
 // backdrop, or the Close button.
 const CHANGELOG = [
+  { date: '2026-07-01', items: [
+    'Selection handles now hug visible content: skips invisible full-canvas rects in imported SVG groups, uses fitted raster bounds for <image>, and unions painted children instead of the loose group box.',
+    'Hold Shift while dragging a corner resize handle to lock aspect ratio (images, rects, groups, paths). Ctrl/Cmd also bypasses alignment snap on move and resize.',
+    'Import dialog accepts PNG, JPEG, WebP, and GIF in addition to SVG.',
+    'Fixed resize flicker on imported SVG paths and groups.',
+  ]},
   { date: '2026-04-23', items: [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
     'Floating tools toolbar redesigned: squared-off with 4 px rounded corners (was pill-shaped) and dropped to the canvas bottom so it sits flush with the other UI chrome.',
@@ -5432,7 +5618,8 @@ const SHORTCUTS = [
     { keys: ['⌘', 'Shift', 'G'],label: 'Ungroup' },
     { keys: ['Arrows'],         label: 'Nudge 1 px' },
     { keys: ['Shift', 'Arrows'],label: 'Nudge 10 px' },
-    { keys: ['Shift', 'Drag'],  label: 'Disable snap (raw drag / resize)' },
+    { keys: ['Shift', 'Corner'], label: 'Lock aspect ratio (resize)' },
+    { keys: ['⌘', 'Drag'],      label: 'Disable alignment snap' },
   ]},
   { group: 'Drawing', items: [
     { keys: ['Shift-drag'],     label: '45° line / square / circle' },
@@ -5617,18 +5804,69 @@ function appendSvgIntoCurrent(svgText) {
   return count;
 }
 
+function isSvgFile(f) {
+  return f.type === 'image/svg+xml' || /\.svg$/i.test(f.name);
+}
+
+function isRasterFile(f) {
+  return (f.type.startsWith('image/') && !isSvgFile(f))
+    || /\.(png|jpe?g|webp|gif)$/i.test(f.name);
+}
+
+function readFileAsDataUrl(f) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = dataUrl;
+  });
+}
+
+function svgMarkupFromRaster(dataUrl, w, h) {
+  const esc = dataUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><image href="${esc}" x="0" y="0" width="${w}" height="${h}"/></svg>`;
+}
+
+async function addRasterDrawingFromFile(f) {
+  const dataUrl = await readFileAsDataUrl(f);
+  const img = await loadImageFromDataUrl(dataUrl);
+  const w = img.naturalWidth  || 100;
+  const h = img.naturalHeight || 100;
+  const base = f.name.replace(/\.[^.]+$/, '');
+  return addDrawingFromSvg(base, svgMarkupFromRaster(dataUrl, w, h));
+}
+
 document.getElementById('importOk').addEventListener('click', async () => {
   const files = Array.from(importFileInp.files || []);
   const mode = document.querySelector('input[name="importMode"]:checked')?.value || 'new';
+  const svgFiles = files.filter(isSvgFile);
+  const rasterFiles = files.filter(isRasterFile);
 
   if (mode === 'current') {
     let added = 0;
     pushUndo();
     if (files.length > 0) {
-      for (const f of files) {
+      for (const f of svgFiles) {
         const text = await f.text();
         if (!text.includes('<svg')) continue;
         added += appendSvgIntoCurrent(text);
+      }
+      for (let i = 0; i < rasterFiles.length; i++) {
+        const f = rasterFiles[i];
+        try {
+          const dataUrl = await readFileAsDataUrl(f);
+          addImageToCanvas(dataUrl, currentW / 2 + i * 10, currentH / 2 + i * 10);
+          added++;
+        } catch {}
       }
     } else {
       const svg = importTextTA.value.trim();
@@ -5642,12 +5880,18 @@ document.getElementById('importOk').addEventListener('click', async () => {
 
   let lastLoaded = null;
   if (files.length > 0) {
-    for (const f of files) {
+    for (const f of svgFiles) {
       const text = await f.text();
       if (!text.includes('<svg')) continue;
       const base = f.name.replace(/\.svg$/i, '');
       const n = addDrawingFromSvg(base, text);
       if (n) lastLoaded = n;
+    }
+    for (const f of rasterFiles) {
+      try {
+        const n = await addRasterDrawingFromFile(f);
+        if (n) lastLoaded = n;
+      } catch {}
     }
   } else {
     const svg = importTextTA.value.trim();

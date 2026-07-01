@@ -75,7 +75,7 @@
       </div>
       <div class="actions">
         <button id="btnNew" data-hint="Create a new drawing (choose canvas size)">+ New</button>
-        <button id="btnImport" data-hint="Load SVG files from disk or paste markup">Import</button>
+        <button id="btnImport" data-hint="Load SVG or image files from disk, or paste SVG markup">Import</button>
         <div class="menu-wrap">
           <button id="btnExport" class="primary" data-hint="Export the current drawing to a file (SVG, PNG, or JPEG)">Export ▾</button>
           <div id="exportMenu" class="menu hidden">
@@ -171,9 +171,9 @@
   <!-- Import dialog -->
   <div id="importDialog" class="dialog hidden">
     <div class="dialog-box">
-      <div class="dialog-title">Import SVG</div>
-      <input type="file" id="importFile" accept=".svg,image/svg+xml" multiple>
-      <div class="muted">…or paste markup below</div>
+      <div class="dialog-title">Import</div>
+      <input type="file" id="importFile" accept=".svg,image/svg+xml,.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" multiple>
+      <div class="muted">SVG, PNG, JPEG, WebP, GIF — or paste SVG markup below</div>
       <textarea id="importText" placeholder="Paste SVG markup here..."></textarea>
       <input type="text" id="importName" placeholder="Name (lowercase, no spaces) — optional when using file picker">
       <fieldset class="import-mode">
