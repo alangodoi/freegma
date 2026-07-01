@@ -881,7 +881,56 @@ async function loadAll() {
 }
 
 function triggerDownload(blob, filename) {
-  const url = URL.createObjectURL(blob);
+  return triggerDownloadAsync(blob, filename);
+}
+
+function exportExtForMime(mime) {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+  if (mime === 'image/svg+xml') return 'svg';
+  return 'bin';
+}
+
+function mimeFromExportExt(ext) {
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'svg') return 'image/svg+xml';
+  return 'application/octet-stream';
+}
+
+// Always end with exactly one correct extension (strip a known one first).
+function filenameWithExt(name, ext) {
+  const base = String(name || 'untitled').trim() || 'untitled';
+  const stem = base.replace(/\.(png|jpe?g|webp|svg|gif)$/i, '');
+  return `${stem}.${ext}`;
+}
+
+async function triggerDownloadAsync(blob, filename) {
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
+  const mime = blob.type || mimeFromExportExt(ext.slice(1));
+  const typed = blob.type === mime ? blob : new Blob([await blob.arrayBuffer()], { type: mime });
+
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: ext.slice(1).toUpperCase() || 'File',
+          accept: { [mime]: ext ? [ext] : [] },
+        }],
+      });
+      const w = await handle.createWritable();
+      await w.write(typed);
+      await w.close();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+
+  const url = URL.createObjectURL(typed);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -999,7 +1048,10 @@ function exportSvg() {
   const svg = clone.outerHTML;
   drawings[name] = { svg, width: currentW, height: currentH };
   currentId = name;
-  triggerDownload(new Blob([svg], { type: 'image/svg+xml' }), `${name}.svg`);
+  void triggerDownloadAsync(
+    new Blob([svg], { type: 'image/svg+xml' }),
+    filenameWithExt(name, 'svg'),
+  );
   refreshIconList();
   flashButton('btnExport', 'SAVED!');
 }
@@ -1007,6 +1059,8 @@ function exportSvg() {
 async function exportRaster(mime) {
   const name = currentId || sanitizeName(prompt('Filename (lowercase, letters/digits/_/-):', 'untitled') || '');
   if (!name) return;
+  const ext = exportExtForMime(mime);
+  const filename = filenameWithExt(name, ext);
   const clone = cleanClone();
   // SVG-in-img can't pull @import over the network, so inline each used
   // Google Font's woff2 as base64 @font-face data URLs. Falls back silently
@@ -1033,17 +1087,14 @@ async function exportRaster(mime) {
     }
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     await new Promise((res) => {
-      const quality = mime === 'image/jpeg' ? 0.92
-                    : mime === 'image/webp' ? 0.95
-                    : undefined;
-      canvas.toBlob((outBlob) => {
+      const onBlob = (outBlob) => {
         if (!outBlob) { alert('Export failed — browser returned no image data.'); res(); return; }
-        const ext = mime === 'image/png'  ? 'png'
-                  : mime === 'image/webp' ? 'webp'
-                  : 'jpg';
-        triggerDownload(outBlob, `${name}.${ext}`);
+        void triggerDownloadAsync(new Blob([outBlob], { type: mime }), filename);
         res();
-      }, mime, quality);
+      };
+      if (mime === 'image/jpeg') canvas.toBlob(onBlob, mime, 0.92);
+      else if (mime === 'image/webp') canvas.toBlob(onBlob, mime, 0.95);
+      else canvas.toBlob(onBlob, mime);
     });
     flashButton('btnExport', 'SAVED!');
   } finally {
@@ -5531,6 +5582,7 @@ const CHANGELOG = [
     'Import dialog accepts PNG, JPEG, WebP, and GIF in addition to SVG.',
     'Fixed resize flicker on imported SVG paths and groups.',
     'Distribute horizontally / vertically now works with 2+ selected shapes (equal gaps including edge margins). Also in the right-click menu.',
+    'Raster export always appends the correct file extension (.png / .jpg / .webp); save picker enforces it when supported.',
   ]},
   { date: '2026-04-23', items: [
     'Help shortcut moved to F1 (was "?"). Canvas-footer cheatsheet removed — the full list now lives only in the "F1 — Help" dialog (top bar).',
